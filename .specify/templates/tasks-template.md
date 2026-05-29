@@ -147,16 +147,18 @@ Examples of foundational tasks (adjust based on your project):
 
 ---
 
-## Phase N: Polish & Cross-Cutting Concerns
+## Phase N : Consolidation transversale
 
-**Purpose**: Improvements that affect multiple user stories
+**Objectif** : Améliorations impactant plusieurs user stories et vérification de conformité constitutionnelle
 
-- [ ] TXXX [P] Documentation updates in docs/
-- [ ] TXXX Code cleanup and refactoring
-- [ ] TXXX Performance optimization across all stories
-- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
-- [ ] TXXX Security hardening
-- [ ] TXXX Run quickstart.md validation
+- [ ] TXXX [P] Mise à jour de la documentation en français dans docs/
+- [ ] TXXX Refactoring et nettoyage du code
+- [ ] TXXX Optimisation des performances (temps de détection ≤ 60s, intervention LOW ≤ 30s)
+- [ ] TXXX [P] Tests unitaires complémentaires dans tests/unit/ (si demandés)
+- [ ] TXXX Audit de sécurité : validation du Principe I (secrets, authentification, chiffrement)
+- [ ] TXXX Vérification de l'observabilité : tous les événements journalisés avec corrélation (Principe II)
+- [ ] TXXX Validation du classement des interventions par niveau de risque (Principe III)
+- [ ] TXXX Exécution de la validation quickstart.md
 
 ---
 
