@@ -36,11 +36,18 @@
 
 **Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
-## Constitution Check
+## Vérification constitutionnelle
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+*PORTE : Obligatoire avant la Phase 0 (recherche). À revérifier après la Phase 1 (conception).*
 
-[Gates determined based on constitution file]
+- [ ] **Principe I — Sécurité par conception** : Les nouvelles surfaces d'attaque sont-elles
+  identifiées ? Les entrées sont-elles validées ? Les secrets sont-ils protégés ?
+- [ ] **Principe II — Observabilité** : Les nouveaux événements sont-ils journalisés avec
+  horodatage ISO 8601 et identifiant de corrélation ?
+- [ ] **Principe III — Intervention contrôlée** : Les interventions sont-elles classifiées
+  (INFO/LOW/MEDIUM/HIGH/CRITICAL) ? Un rollback est-il prévu ?
+- [ ] **Principe IV — TDD** : Les tests sont-ils écrits et en échec avant l'implémentation ?
+- [ ] **Principe V — Simplicité** : La complexité ajoutée est-elle justifiée par un besoin réel ?
 
 ## Project Structure
 
