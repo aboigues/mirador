@@ -85,18 +85,18 @@
   Fill them out with the right functional requirements.
 -->
 
-### Functional Requirements
+### Exigences fonctionnelles
 
-- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
-- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
-- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
-- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
-- **FR-005**: System MUST [behavior, e.g., "log all security events"]
+- **EF-001** : Le système DOIT [capacité spécifique, ex. : « permettre la surveillance d'un pipeline »]
+- **EF-002** : Le système DOIT valider et assainir toutes les entrées externes (webhooks, événements).
+- **EF-003** : Les utilisateurs DOIVENT pouvoir [interaction clé, ex. : « consulter l'historique des interventions »]
+- **EF-004** : Le système DOIT journaliser tous les événements avec horodatage ISO 8601 et corrélation.
+- **EF-005** : Le système DOIT classifier chaque intervention par niveau de risque (INFO/LOW/MEDIUM/HIGH/CRITICAL).
 
-*Example of marking unclear requirements:*
+*Exemple de marquage d'exigences à clarifier :*
 
-- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
-- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
+- **EF-006** : Le système DOIT authentifier les agents via [À CLARIFIER : méthode d'auth non précisée — token JWT, OAuth2, clé API ?]
+- **EF-007** : Le système DOIT conserver les logs pendant [À CLARIFIER : durée de rétention non précisée — 30 jours minimum selon constitution]
 
 ### Key Entities *(include if feature involves data)*
 
