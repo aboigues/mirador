@@ -27,7 +27,7 @@ IA moins matures) ; Go (performance maximale mais surcoût développement pour u
 | boto3 | 1.43.17 | Client Scaleway MnQ (SQS-compatible) |
 | anthropic | 0.105.2 | SDK agents IA Claude |
 | structlog | 25.5.0 | Journalisation structurée JSON |
-| SQLAlchemy | 2.x | ORM PostgreSQL |
+| aiosqlite | 0.20.x | SQLite async (writer) |
 | FastAPI | 0.115.x | Récepteur de webhooks / API consultation |
 | pytest | 9.0.3 | Tests unitaires et d'intégration |
 | pytest-asyncio | 0.24.x | Support async dans les tests |
@@ -98,30 +98,52 @@ aux recommandations GitHub (header `X-Hub-Signature-256`, algo SHA-256).
 
 ## 5. Journalisation immuable (audit append-only)
 
-**Décision** : Table PostgreSQL `audit_evenements` avec trigger BEFORE UPDATE/DELETE
-→ RAISE EXCEPTION, complété par un rôle PostgreSQL sans droits UPDATE/DELETE.
+**Décision** : Immutabilité enforced au niveau applicatif via un writer unique :
+seules des instructions `INSERT` sont émises ; aucun `UPDATE` ni `DELETE` n'existe
+dans le code du writer. Le mode WAL de SQLite garantit la cohérence en cas de crash.
 
-**Rationale** : L'immutabilité enforced au niveau base de données est plus robuste
-qu'une contrainte applicative seule (contourne les bugs de code, les connexions directes).
-Double protection : trigger SQL + permissions rôle.
+**Rationale** : Le single-writer sérialisé par la queue `mirador-writes` remplace le
+trigger PostgreSQL. Pour un POC à 1-5 dépôts avec un volume d'événements faible, cette
+garantie applicative est suffisante et supprime la dépendance à une base de données
+managée. Le risque de contournement accidentel (connexion directe hors writer) est
+inexistant dans ce contexte d'usage personnel.
 
-**Alternatives considérées** : Append-only via stockage objet (Scaleway Object Storage) —
-plus simple mais pas requêtable ; event sourcing complet — surcoût architectural pour
-un POC à 1-5 dépôts.
+**Alternatives considérées** : Trigger PostgreSQL `BEFORE UPDATE/DELETE → RAISE EXCEPTION`
+(plus robuste, mais coût ~€11/mois pour un POC) ; event sourcing complet (surcoût
+architectural injustifié à cette échelle).
 
 ---
 
 ## 6. Stockage principal
 
-**Décision** : PostgreSQL managé Scaleway (Managed Database for PostgreSQL).
+**Décision** : SQLite (mode WAL) persisté dans un bucket Scaleway Object Storage,
+avec sérialisation des écritures via une queue dédiée `mirador-writes`.
 
-**Rationale** : Compatible serverless via PgBouncer (pool de connexions) pour éviter
-l'épuisement des connexions lors des démarrages à froid simultanés. PostgreSQL offre
-le support JSON, les triggers pour l'immutabilité, et les requêtes analytiques pour
-l'historique 30 jours.
+**Architecture** :
+- Les fonctions serverless (webhook, traitement) n'écrivent jamais directement en base.
+  Elles enqueued des messages dans `mirador-writes`.
+- Un writer unique consomme `mirador-writes` : il télécharge le fichier SQLite depuis
+  le bucket, exécute les `INSERT` en batch, puis réupload le fichier avec vérification
+  de checksum (SHA-256) avant de valider les messages.
+- SQLite en mode WAL : les lectures peuvent se faire en parallèle des écritures ; en
+  cas de crash avant l'upload, les messages restent dans la queue et sont retraités.
 
-**Alternatives considérées** : SQLite (pas adapté à un service distribué) ;
-DynamoDB/NoSQL (mauvais fit pour les requêtes relationnelles audit/historique).
+**Configuration des queues** :
+- `mirador-webhooks` (existante) : réception des événements GitHub
+- `mirador-writes` (nouvelle) : sérialisation des écritures SQLite, VisibilityTimeout = 60s
+- `mirador-writes-dlq` : lettres mortes après 3 tentatives
+
+**Coût** : Scaleway Object Storage ~€0,02/GB/mois — pratiquement gratuit pour un fichier
+SQLite de quelques MB (30 jours d'audit, 1-5 dépôts).
+
+**Rationale** : La concurrence multi-writer est le seul vrai problème de SQLite en
+contexte serverless. La queue `mirador-writes` le résout sans infrastructure managée.
+La latence d'écriture additionnelle (download + upload bucket, ~100-300ms) est
+acceptable pour un journal d'audit non critique au chemin de traitement principal.
+
+**Alternatives considérées** : PostgreSQL managé Scaleway DB-DEV-S (~€11/mois, justifié
+pour de la production) ; Neon serverless PostgreSQL (gratuit, mais hors écosystème
+Scaleway) ; Litestream (réplication WAL continue vers S3, complexité supérieure).
 
 ---
 
@@ -142,16 +164,16 @@ prévus dans le catalogue) ; GPT-4 (moins intégré dans l'écosystème Mirador)
 
 ## 8. Tests d'intégration (conformité Principe IV)
 
-**Décision** : Tests d'intégration avec FastAPI TestClient + PostgreSQL réelle
-(testcontainers-python) + Scaleway MnQ simulé (localstack). Aucun mock de la couche
-sécurité (HMAC, JWT).
+**Décision** : Tests d'intégration avec FastAPI TestClient + SQLite en mémoire (`:memory:`)
++ Scaleway MnQ simulé (localstack). Aucun mock de la couche sécurité (HMAC, JWT).
 
 **Rationale** : Conforme au Principe IV de la constitution : les tests de la couche
-sécurité utilisent des interfaces réelles pour détecter les divergences mock/prod.
-testcontainers garantit l'isolation et la reproductibilité.
+sécurité utilisent des interfaces réelles. SQLite en mémoire est identique à SQLite sur
+fichier pour les tests fonctionnels — la différence (upload bucket) est testée séparément
+via localstack S3. Plus rapide et sans Docker pour les tests unitaires.
 
 **Packages additionnels tests** :
-- `testcontainers` : PostgreSQL et localstack en Docker
+- `localstack` (via Docker) : SQS + S3 compatibles pour les tests d'intégration
 - `pytest-asyncio` : tests des handlers async
 - `respx` : mock réseau uniquement pour l'API GitHub externe (acceptable car ce n'est
   pas une couche de sécurité interne)
