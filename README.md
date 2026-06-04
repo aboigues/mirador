@@ -33,7 +33,8 @@ flowchart TD
     WRITER["Writer unique\nINSERT-only · WAL"]
     BUCKET[("Scaleway Object Storage\nmirador.db · SQLite WAL\n~€0.02/mois")]
     API["GET /etat · /historique\nAPI consultation"]
-    HUMAIN["Validation humaine\nPOST /interventions/:id/approuver"]
+    ISSUE["GitHub Issue\n[Mirador] Anomalie HIGH\n/approuver · /rejeter"]
+    HUMAIN["Responsable humain\ncommente sur l'issue"]
 
     GH -->|"webhook workflow_run"| WH
     WH -->|"202 — message enqueué"| MNQ
@@ -44,14 +45,17 @@ flowchart TD
     SUP -->|"INFO"| WQUEUE
     SUP -->|"LOW"| CORR
     SUP -->|"MEDIUM"| NOTIF
-    SUP -->|"HIGH / CRITICAL"| HUMAIN
+    SUP -->|"HIGH / CRITICAL"| ISSUE
+    ISSUE -->|"notification GitHub"| HUMAIN
+    HUMAIN -->|"webhook issue_comment\n/approuver"| WH
+    HUMAIN -->|"webhook issue_comment\n/rejeter motif"| WH
+    WH -->|"commande approuvée"| CORR
+    WH -->|"commande rejetée"| WQUEUE
     CORR --> RELANCE
     CORR --> PR
     RELANCE --> WQUEUE
     PR --> WQUEUE
     NOTIF --> WQUEUE
-    HUMAIN -->|"approuvé"| CORR
-    HUMAIN -->|"rejeté"| WQUEUE
     WQUEUE -->|"échec × 3"| DLQ2
     WQUEUE --> WRITER
     WRITER -->|"download → INSERT → upload + checksum"| BUCKET
@@ -65,8 +69,8 @@ flowchart TD
 | `INFO` | Événement normal | Journalisation uniquement |
 | `LOW` | Échec isolé, pattern connu | Relance automatique |
 | `MEDIUM` | Échec répété ou inattendu | Notification + attente |
-| `HIGH` | Régression ou impact étendu | Validation humaine requise |
-| `CRITICAL` | Incident de production | Validation humaine requise |
+| `HIGH` | Régression ou impact étendu | GitHub Issue → `/approuver` ou `/rejeter` |
+| `CRITICAL` | Incident de production | GitHub Issue → `/approuver` ou `/rejeter` |
 
 ---
 
