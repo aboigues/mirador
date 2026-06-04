@@ -73,6 +73,11 @@ inadapté aux agents autonomes).
 - Surveillance seule (lecture) : `actions: read`, `metadata: read`, `checks: read`
 - Relance de workflow : + `actions: write`
 - Ouverture de PR de correction : + `contents: write`, `pull-requests: write`
+- Escalade humaine (GitHub Issue) : + `issues: write`
+
+**Événements webhook GitHub App à souscrire** :
+- `workflow_run` : détection des anomalies CI/CD
+- `issue_comment` : réception des commandes `/approuver` et `/rejeter` des responsables
 
 **Secrets** : `GITHUB_APP_ID` et `GITHUB_APP_PRIVATE_KEY` stockés en variables
 d'environnement Scaleway Serverless (chiffrées au repos).

@@ -112,13 +112,15 @@ action automatique n'est prise, qu'un rapport est généré et qu'une notificati
    **alors** aucune intervention automatique n'est exécutée ; un rapport est créé et les
    responsables humains désignés sont notifiés.
 
-2. **Étant donné** une notification envoyée aux responsables,
-   **quand** un responsable approuve l'intervention proposée,
-   **alors** l'action est exécutée et le résultat enregistré dans l'historique immuable.
+2. **Étant donné** une GitHub Issue ouverte par Mirador sur le dépôt surveillé,
+   **quand** un responsable désigné poste le commentaire `/approuver`,
+   **alors** GitHub envoie un webhook `issue_comment` à Mirador, l'intervention est
+   déclenchée et l'issue est fermée avec un commentaire de confirmation.
 
-3. **Étant donné** un responsable qui rejette l'intervention proposée,
-   **quand** le rejet est enregistré,
-   **alors** l'anomalie reste ouverte dans l'historique avec le motif du rejet.
+3. **Étant donné** une GitHub Issue ouverte par Mirador,
+   **quand** un responsable poste le commentaire `/rejeter <motif>`,
+   **alors** l'anomalie passe en statut REJETÉE, le motif est enregistré dans l'historique
+   immuable et l'issue est fermée.
 
 ---
 
@@ -168,7 +170,9 @@ action automatique n'est prise, qu'un rapport est généré et qu'une notificati
   la validation de l'agent superviseur avant exécution.
 
 - **EF-007** : Pour les niveaux HIGH et CRITICAL, le système DOIT bloquer toute intervention
-  automatique et notifier les responsables humains désignés.
+  automatique, ouvrir une GitHub Issue sur le dépôt surveillé avec le résumé de l'anomalie
+  et du correctif proposé, et attendre une commande de validation humaine (`/approuver` ou
+  `/rejeter <motif>`) postée en commentaire de cette issue par un responsable désigné.
 
 - **EF-008** : Chaque événement, décision et action DOIT être journalisé avec horodatage
   ISO 8601, identifiant de corrélation, niveau de risque, et résultat observé.
