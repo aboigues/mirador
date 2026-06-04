@@ -14,7 +14,8 @@ serverless Python 3.12 scale-to-zero. L'agent IA analyse les anomalies détecté
 les classe par niveau de risque (INFO→CRITICAL) et applique des corrections
 automatiques (RELANCE ou PULL_REQUEST) pour les niveaux bas, avec escalade vers
 validation humaine pour les niveaux HIGH/CRITICAL. Tout est journalisé de façon
-immuable (PostgreSQL append-only, 30 jours).
+immuable (SQLite append-only via writer unique, persisté dans un bucket Scaleway
+Object Storage, 30 jours).
 
 ---
 
@@ -30,12 +31,13 @@ immuable (PostgreSQL append-only, 30 jours).
 - `boto3 1.43.17` — client Scaleway MnQ (SQS-compatible)
 - `anthropic 0.105.2` — SDK agent IA Claude (analyse logs, génération correctifs)
 - `structlog 25.5.0` — journalisation structurée JSON avec corrélation UUID
-- `SQLAlchemy 2.x` — ORM PostgreSQL (modèles + triggers append-only)
+- `aiosqlite 0.20.x` — accès SQLite async pour le writer
 - `FastAPI 0.115.x` — récepteur de webhooks + API de consultation (EF-010)
 
-**Stockage** : PostgreSQL managé Scaleway (via PgBouncer pour pooling serverless)
+**Stockage** : SQLite (mode WAL) dans un bucket Scaleway Object Storage ; écritures
+sérialisées via la queue `mirador-writes` (writer unique, ~€0,02/mois)
 
-**Tests** : pytest 9.0.3 + pytest-asyncio + testcontainers (PostgreSQL + localstack SQS)
+**Tests** : pytest 9.0.3 + pytest-asyncio + SQLite en mémoire + localstack (SQS + S3)
 
 **Plateforme cible** : Scaleway Serverless Functions, Python 3.12, Linux
 
@@ -49,7 +51,8 @@ immuable (PostgreSQL append-only, 30 jours).
 **Contraintes** :
 - Stateless entre invocations (serverless scale-to-zero)
 - 1 à 5 dépôts surveillés simultanément (périmètre v1)
-- Secrets (GITHUB_APP_PRIVATE_KEY, WEBHOOK_SECRET, DB_URL) en variables d'env chiffrées
+- Secrets (GITHUB_APP_PRIVATE_KEY, WEBHOOK_SECRET, BUCKET_NAME, AWS_ACCESS_KEY_ID,
+  AWS_SECRET_ACCESS_KEY) en variables d'env chiffrées Scaleway Serverless
 
 **Périmètre/Échelle** : 1-5 dépôts, POC/usage personnel, GitHub Actions uniquement
 

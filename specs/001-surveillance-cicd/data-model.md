@@ -112,8 +112,10 @@ Entrée immuable d'audit. Aucun UPDATE ni DELETE autorisé (enforced par trigger
 | `details` | JSON | nullable | Contexte additionnel |
 | `resultat` | text | nullable | Description du résultat |
 
-**Immutabilité** : trigger PostgreSQL `BEFORE UPDATE OR DELETE → RAISE EXCEPTION` +
-rôle applicatif avec permissions `INSERT, SELECT` uniquement (pas `UPDATE, DELETE`).
+**Immutabilité** : enforced au niveau applicatif par le writer unique — seules des
+instructions `INSERT` sont émises ; aucun chemin de code ne contient `UPDATE` ou
+`DELETE`. SQLite en mode WAL garantit la cohérence en cas de crash avant l'upload
+vers le bucket.
 
 ---
 
