@@ -9,10 +9,36 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
+import boto3
 import structlog
 from fastapi import FastAPI, Request, Response
 
 log = structlog.get_logger(__name__)
+
+_SQS_ENDPOINT_DEFAUT = "https://sqs.mnq.fr-par.scaleway.com"
+
+
+async def enqueuer_sqs(message: dict[str, Any], env: Optional[dict[str, str]] = None) -> None:
+    """Publie un message dans la queue MnQ (FIFO).
+
+    MnQ exige ses propres credentials (MNQ_ACCESS_KEY / MNQ_SECRET_KEY), distincts
+    des clés IAM du bucket Object Storage. Queue FIFO → MessageGroupId obligatoire
+    et déduplication par delivery_id.
+    """
+    env = env if env is not None else os.environ
+    sqs = boto3.client(
+        "sqs",
+        endpoint_url=env.get("SQS_ENDPOINT_URL", _SQS_ENDPOINT_DEFAUT),
+        region_name=env.get("AWS_REGION", "fr-par"),
+        aws_access_key_id=env["MNQ_ACCESS_KEY"],
+        aws_secret_access_key=env["MNQ_SECRET_KEY"],
+    )
+    sqs.send_message(
+        QueueUrl=env["SQS_QUEUE_URL"],
+        MessageBody=json.dumps(message),
+        MessageDeduplicationId=message.get("delivery_id", ""),
+        MessageGroupId="webhooks",
+    )
 
 _EVENEMENTS_TRAITES = {"workflow_run", "issue_comment"}
 
@@ -130,18 +156,7 @@ def creer_application(
     app = FastAPI(title="Mirador Webhook")
 
     async def _enqueue_reel(message: dict[str, Any]) -> None:
-        import boto3
-        sqs = boto3.client(
-            "sqs",
-            endpoint_url=os.environ.get("SQS_ENDPOINT_URL", "https://mq-sqs.scaleway.com"),
-            region_name=os.environ.get("AWS_REGION", "fr-par"),
-        )
-        sqs.send_message(
-            QueueUrl=os.environ["SQS_QUEUE_URL"],
-            MessageBody=json.dumps(message),
-            MessageDeduplicationId=message.get("delivery_id", ""),
-            MessageGroupId="webhooks",
-        )
+        await enqueuer_sqs(message)
 
     async def _enqueue_stub(message: dict[str, Any]) -> None:
         log.info("webhook.enqueue_stub", message=message)

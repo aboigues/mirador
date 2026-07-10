@@ -15,3 +15,6 @@ build/
 *.pem
 *.key
 mirador-depots.json
+.env*
+**/.secrets.env
+!.env.example
