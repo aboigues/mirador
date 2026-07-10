@@ -1,0 +1,60 @@
+name: Déploiement Scaleway
+
+# Déploiement continu : met à jour le CODE des fonctions à chaque push sur master
+# touchant le code applicatif. Les secrets/env des fonctions ne sont PAS modifiés
+# (posés une fois par infra/scaleway/deploy.sh). Le job n'a donc besoin que des
+# credentials Scaleway, pas des secrets applicatifs.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "handler.py"
+      - "requirements.txt"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-scaleway
+  cancel-in-progress: false
+
+env:
+  SCW_VERSION: "2.56.3"
+  SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+  SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+  SCW_DEFAULT_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+  SCW_DEFAULT_REGION: fr-par
+  SCW_PROFILE: "" # utilise les credentials d'environnement, pas un profil
+
+jobs:
+  deploy:
+    name: Mise à jour du code des fonctions
+    runs-on: ubuntu-latest
+    env:
+      PIP: pip # update_code.sh vendorise les wheels musllinux avec ce pip (python 3.12)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer la CLI scw
+        run: |
+          curl -fsSL -o /usr/local/bin/scw \
+            "https://github.com/scaleway/scaleway-cli/releases/download/v${SCW_VERSION}/scaleway-cli_${SCW_VERSION}_linux_amd64"
+          chmod +x /usr/local/bin/scw
+          scw version
+
+      - name: Déployer le code (webhook + traitement)
+        run: |
+          set -euo pipefail
+          NS_ID=$(scw function namespace list -o json \
+            | python3 -c "import sys,json;print(next(n['id'] for n in json.load(sys.stdin) if n['name']=='mirador'))")
+          echo "namespace mirador = $NS_ID"
+          for fn in webhook traitement; do
+            FN_ID=$(scw function function list namespace-id="$NS_ID" -o json \
+              | python3 -c "import sys,json;print(next(f['id'] for f in json.load(sys.stdin) if f['name']=='$fn'))")
+            echo "→ déploiement de $fn ($FN_ID)"
+            bash infra/scaleway/update_code.sh "$FN_ID"
+          done

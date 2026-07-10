@@ -1,0 +1,22 @@
+{
+  "name": "Mirador CI/CD",
+  "description": "Agent IA qui surveille les workflows GitHub Actions, corrige les anomalies (relance / pull request) et escalade les cas sensibles vers validation humaine.",
+  "url": "https://github.com/aboigues/mirador",
+  "public": false,
+  "hook_attributes": {
+    "url": "https://REMPLACER-APRES-DEPLOIEMENT.functions.fnc.fr-par.scw.cloud/webhooks/github",
+    "active": true
+  },
+  "default_permissions": {
+    "metadata": "read",
+    "checks": "read",
+    "actions": "write",
+    "contents": "write",
+    "pull_requests": "write",
+    "issues": "write"
+  },
+  "default_events": [
+    "workflow_run",
+    "issue_comment"
+  ]
+}

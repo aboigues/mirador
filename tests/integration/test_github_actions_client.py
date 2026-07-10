@@ -1,0 +1,142 @@
+"""Tests d'intégration : client GitHub Actions (relance, logs, PR, Issues).
+
+Le client obtient un token d'installation via un fournisseur (GitHubAppAuth en
+prod, stub ici puisque l'auth est testée séparément), puis appelle l'API GitHub.
+Les appels HTTP sont stubés via respx ; le client réel (httpx) n'est pas mocké.
+"""
+import httpx
+import pytest
+import respx
+
+from src.infrastructure.github.actions_client import GitHubActionsClient
+
+BASE_URL = "https://api.github.com"
+DEPOT = "aboigues/k8t"
+INSTALLATION_ID = 98765
+RUN_ID = 12345678
+TOKEN = "ghs_test_token"
+
+
+class _AuthStub:
+    """Fournisseur de token minimal (l'auth réelle est testée dans test_github_app_auth)."""
+
+    def __init__(self):
+        self.appels: list[int] = []
+
+    async def obtenir_token_installation(self, installation_id: int) -> str:
+        self.appels.append(installation_id)
+        return TOKEN
+
+
+@pytest.fixture
+def auth():
+    return _AuthStub()
+
+
+@pytest.fixture
+def client(auth):
+    return GitHubActionsClient(auth, base_url=BASE_URL)
+
+
+def _url(chemin: str) -> str:
+    return f"{BASE_URL}/repos/{DEPOT}{chemin}"
+
+
+class TestRelanceWorkflow:
+    @respx.mock
+    async def test_relance_appelle_endpoint_rerun(self, client, auth):
+        route = respx.post(_url(f"/actions/runs/{RUN_ID}/rerun")).mock(
+            return_value=httpx.Response(201)
+        )
+        await client.relancer_workflow(DEPOT, RUN_ID, INSTALLATION_ID)
+        assert route.called
+        assert auth.appels == [INSTALLATION_ID]
+        assert route.calls.last.request.headers["Authorization"] == f"Bearer {TOKEN}"
+
+    @respx.mock
+    async def test_erreur_http_remonte(self, client):
+        respx.post(_url(f"/actions/runs/{RUN_ID}/rerun")).mock(
+            return_value=httpx.Response(404, json={"message": "Not Found"})
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.relancer_workflow(DEPOT, RUN_ID, INSTALLATION_ID)
+
+
+class TestTelechargementLogs:
+    @respx.mock
+    async def test_logs_suit_la_redirection_et_retourne_les_octets(self, client):
+        respx.get(_url(f"/actions/runs/{RUN_ID}/logs")).mock(
+            return_value=httpx.Response(302, headers={"Location": "https://dl.github.com/logs.zip"})
+        )
+        respx.get("https://dl.github.com/logs.zip").mock(
+            return_value=httpx.Response(200, content=b"PK\x03\x04zip-des-logs")
+        )
+        contenu = await client.telecharger_logs(DEPOT, RUN_ID, INSTALLATION_ID)
+        assert contenu == b"PK\x03\x04zip-des-logs"
+
+
+class TestIssues:
+    @respx.mock
+    async def test_ouvrir_issue_retourne_numero_et_url(self, client):
+        route = respx.post(_url("/issues")).mock(
+            return_value=httpx.Response(
+                201, json={"number": 42, "html_url": f"https://github.com/{DEPOT}/issues/42"}
+            )
+        )
+        resultat = await client.ouvrir_issue(
+            DEPOT, INSTALLATION_ID,
+            titre="[Mirador] Anomalie HIGH — CI",
+            corps="détails",
+            labels=["mirador", "high"],
+        )
+        assert resultat["number"] == 42
+        assert resultat["html_url"].endswith("/issues/42")
+        import json
+        envoye = json.loads(route.calls.last.request.content)
+        assert envoye["title"].startswith("[Mirador]")
+        assert envoye["labels"] == ["mirador", "high"]
+
+    @respx.mock
+    async def test_commenter_issue(self, client):
+        route = respx.post(_url("/issues/42/comments")).mock(
+            return_value=httpx.Response(201, json={"id": 1})
+        )
+        await client.commenter_issue(DEPOT, INSTALLATION_ID, 42, "✅ approuvé")
+        import json
+        assert json.loads(route.calls.last.request.content)["body"] == "✅ approuvé"
+
+    @respx.mock
+    async def test_fermer_issue_ajoute_label_et_ferme(self, client):
+        route_label = respx.post(_url("/issues/42/labels")).mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        route_patch = respx.patch(_url("/issues/42")).mock(
+            return_value=httpx.Response(200, json={"number": 42, "state": "closed"})
+        )
+        await client.fermer_issue(DEPOT, INSTALLATION_ID, 42, label="resolved")
+        assert route_label.called and route_patch.called
+        import json
+        assert json.loads(route_label.calls.last.request.content)["labels"] == ["resolved"]
+        assert json.loads(route_patch.calls.last.request.content)["state"] == "closed"
+
+
+class TestPullRequest:
+    @respx.mock
+    async def test_creer_pr_retourne_numero_et_url(self, client):
+        route = respx.post(_url("/pulls")).mock(
+            return_value=httpx.Response(
+                201, json={"number": 7, "html_url": f"https://github.com/{DEPOT}/pull/7"}
+            )
+        )
+        resultat = await client.creer_pull_request(
+            DEPOT, INSTALLATION_ID,
+            titre="fix: correctif proposé",
+            corps="correctif automatique Mirador",
+            branche_source="mirador/fix-timeout",
+            branche_cible="main",
+        )
+        assert resultat["number"] == 7
+        import json
+        envoye = json.loads(route.calls.last.request.content)
+        assert envoye["head"] == "mirador/fix-timeout"
+        assert envoye["base"] == "main"

@@ -10,3 +10,11 @@ build/
 *.egg-info/
 .env
 .env.local
+
+# Secrets — ne jamais commiter
+*.pem
+*.key
+mirador-depots.json
+.env*
+**/.secrets.env
+!.env.example
