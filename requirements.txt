@@ -1,0 +1,10 @@
+# Dépendances runtime des fonctions Scaleway (installées au build).
+# Sous-ensemble des dépendances de prod réellement importées au runtime des
+# handlers (pas d'uvicorn : Scaleway fournit le serveur HTTP du handler).
+pydantic>=2.13.4
+httpx>=0.28.1
+PyJWT>=2.9.0
+boto3>=1.43.17
+anthropic>=0.105.2
+structlog>=25.5.0
+fastapi>=0.115.0

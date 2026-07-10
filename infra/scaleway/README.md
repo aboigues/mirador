@@ -99,3 +99,44 @@ scw iam api-key create application-id=$APP_ID \
 | `MIRADOR_DEPOTS` | config JSON des dépôts (voir `docs/github-app.md` §4) |
 
 > 🔒 `.secrets.env` et tout fichier de secrets sont exclus par `.gitignore`.
+
+## Déploiement des fonctions
+
+Deux fonctions Scaleway dans le namespace `mirador` (projet MIRADOR) :
+
+| Fonction | Handler | Privacy | Scale | Rôle |
+|----------|---------|---------|-------|------|
+| `webhook` | `handler.webhook` | public | 0→5 | reçoit les webhooks GitHub → enqueue MnQ |
+| `traitement` | `handler.traitement` | private | 0→**1** | consomme la file → pipeline |
+
+> `traitement` est plafonné à **max-scale 1** : le writer d'audit est unique
+> (sérialisation des écritures SQLite → immutabilité). Un trigger SQS le déclenche
+> sur `mirador-webhooks.fifo`.
+
+### Déploiement initial (une fois)
+
+Remplir `infra/scaleway/.secrets.env` avec **toutes** les variables du tableau
+ci-dessus (env + secrets), puis :
+
+```bash
+./infra/scaleway/deploy.sh
+```
+
+Le script crée le namespace, les 2 fonctions (env + secrets), déploie le code,
+branche le trigger SQS, et affiche l'**URL du webhook** à reporter dans la
+GitHub App (`docs/github-app.md` § 5).
+
+### Mises à jour de code (continu)
+
+À chaque push sur `master` touchant `src/`, `handler.py` ou `requirements.txt`,
+le workflow [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)
+met à jour **uniquement le code** des fonctions (build zip → upload → deploy),
+sans toucher aux secrets. Manuellement :
+
+```bash
+./infra/scaleway/update_code.sh <function-id>
+```
+
+**Secrets GitHub Actions requis** (Settings → Secrets) : `SCW_ACCESS_KEY`,
+`SCW_SECRET_KEY`, `SCW_PROJECT_ID` (= projet MIRADOR). Le CD ne connaît pas les
+secrets applicatifs — ils restent sur les fonctions.
