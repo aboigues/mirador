@@ -140,3 +140,19 @@ sans toucher aux secrets. Manuellement :
 **Secrets GitHub Actions requis** (Settings → Secrets) : `SCW_ACCESS_KEY`,
 `SCW_SECRET_KEY`, `SCW_PROJECT_ID` (= projet MIRADOR). Le CD ne connaît pas les
 secrets applicatifs — ils restent sur les fonctions.
+
+### Contraintes du runtime (découvertes au 1er déploiement réel)
+
+- **Runtime = Alpine Linux / musl** (`EXT_SUFFIX = …-linux-musl.so`). Les wheels
+  `manylinux`/glibc produisent un `.so` introuvable au runtime → il faut des
+  **wheels `musllinux`**. `update_code.sh` les installe via
+  `pip install --platform musllinux_1_2_x86_64 --only-binary=:all: --abi cp312`.
+- **Le déploiement bas-niveau (upload zip) ne build pas `requirements.txt`** → les
+  dépendances sont **vendorées** dans le zip (~20 Mo). `requirements.txt` est
+  volontairement exclu du zip pour éviter tout rebuild côté Scaleway.
+- **Namespace** : après création il est brièvement « blocking » → `deploy.sh`
+  attend l'état `ready` avant de créer les fonctions.
+- **URL du webhook déployée** :
+  `https://miradorjghejyxc-webhook.functions.fnc.fr-par.scw.cloud/webhooks/github`
+  (à reporter dans la GitHub App). Validée en réel : 202 (signé), 403 (mauvaise
+  signature), 204 (événement ignoré).

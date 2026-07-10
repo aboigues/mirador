@@ -53,6 +53,27 @@ else
   echo "   existant : $NS_ID"
 fi
 
+echo "   attente de l'état 'ready'..."
+if REGION="$REGION" PROFILE="$PROFILE" NS_ID="$NS_ID" python3 - <<'PYEOF'
+import subprocess, json, time, sys, os
+ns, region, profile = os.environ["NS_ID"], os.environ["REGION"], os.environ.get("PROFILE", "")
+base = ["scw"] + (["--profile", profile] if profile else [])
+for _ in range(60):
+    p = subprocess.run(base + ["function", "namespace", "get", f"namespace-id={ns}",
+                               f"region={region}", "-o", "json"], capture_output=True, text=True)
+    try:
+        st = json.loads(p.stdout).get("status")
+    except Exception:
+        st = None
+    if st == "ready":
+        sys.exit(0)
+    if st == "error":
+        sys.exit(1)
+    time.sleep(5)
+sys.exit(1)
+PYEOF
+then echo "   ✅ prêt"; else echo "   ❌ namespace non prêt (timeout)"; exit 1; fi
+
 # deployer_fonction <nom> <handler> <privacy> <memory> <timeout> <max-scale>
 deployer_fonction() {
   local nom="$1" handler="$2" privacy="$3" mem="$4" tmo="$5" maxs="$6"

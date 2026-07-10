@@ -30,8 +30,14 @@ jobs:
   deploy:
     name: Mise à jour du code des fonctions
     runs-on: ubuntu-latest
+    env:
+      PIP: pip # update_code.sh vendorise les wheels musllinux avec ce pip (python 3.12)
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Installer la CLI scw
         run: |

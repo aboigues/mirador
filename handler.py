@@ -1,11 +1,9 @@
 """Points d'entrée Scaleway Serverless Functions.
 
-Deux fonctions partagent ce package :
 - handler.webhook     → récepteur HTTP des webhooks GitHub (→ file MnQ)
 - handler.traitement  → consommateur de la file (→ pipeline)
 
-Les handlers construisent leurs dépendances réelles depuis l'environnement
-(secrets Scaleway chiffrés). Voir infra/scaleway/README.md.
+Les dépendances sont vendorées en wheels musllinux (runtime Scaleway = Alpine/musl).
 """
 from src.gestionnaires.handlers import handler_traitement, handler_webhook
 
