@@ -35,7 +35,9 @@ class GitHubAppAuth:
         horloge: Optional[Callable[[], datetime]] = None,
     ) -> None:
         self._app_id = str(app_id)
-        self._cle_privee = cle_privee_pem
+        # Tolère un PEM stocké sur une seule ligne (\n échappés) — cas des
+        # variables d'env / secrets Scaleway qui ne préservent pas les sauts de ligne.
+        self._cle_privee = cle_privee_pem.replace("\\n", "\n")
         self._base_url = base_url
         self._horloge = horloge or (lambda: datetime.now(timezone.utc))
         # installation_id → (token, date d'expiration)

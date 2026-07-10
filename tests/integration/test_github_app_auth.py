@@ -75,6 +75,14 @@ class TestGenerationJWT:
         maintenant = int(horloge().timestamp())
         assert claims["iat"] <= maintenant  # iat dans le passé (tolérance d'horloge)
         assert claims["exp"] > maintenant
+
+    def test_cle_privee_une_ligne_echappee(self, paire_cles, horloge):
+        # Stockage possible en .env / secret Scaleway : PEM sur une ligne avec \n
+        pem_privee, pem_publique = paire_cles
+        pem_une_ligne = pem_privee.replace("\n", "\\n")
+        auth = GitHubAppAuth(APP_ID, pem_une_ligne, base_url=BASE_URL, horloge=horloge)
+        claims = jwt.decode(auth.generer_jwt_app(), pem_publique, algorithms=["RS256"])
+        assert claims["iss"] == APP_ID
         assert claims["exp"] - claims["iat"] <= 600  # max 10 min imposé par GitHub
 
     def test_jwt_rejete_par_mauvaise_cle(self, auth):
