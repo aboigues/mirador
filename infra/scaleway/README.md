@@ -1,43 +1,82 @@
 # Provisioning Scaleway — Mirador
 
-Ressources nécessaires au fonctionnement réel de Mirador dans le projet Scaleway
-cible (profil `telemach` → projet **LMS**, région `fr-par`).
+Toutes les ressources vivent dans un **projet dédié MIRADOR** (isolation propre,
+séparé du reste). Accès via le profil CLI `telemach`.
+
+| | |
+|---|---|
+| Profil CLI | `telemach` |
+| Projet | **MIRADOR** — `4135267b-fd5a-4079-b716-8b24240deabd` |
+| Application IAM | `mirador` — `fc368266-20ae-481c-a40a-d70f1580ec53` |
+| Région | `fr-par` |
 
 ## Ressources provisionnées (2026-07-10)
 
-| Ressource | Nom | État |
-|-----------|-----|------|
-| Bucket Object Storage | `telemach-mirador-audit` | ✅ créé |
+| Ressource | Nom / ID | État |
+|-----------|----------|------|
 | MnQ SQS | service | ✅ activé (`https://sqs.mnq.fr-par.scaleway.com`) |
-| Queue FIFO | `mirador-webhooks.fifo` (+ `-dlq`) | ✅ créée (VisibilityTimeout 300s, maxReceive 3) |
-| Queue FIFO | `mirador-writes.fifo` (+ `-dlq`) | ✅ créée (VisibilityTimeout 60s, maxReceive 3) |
-| Credentials MnQ | `mirador` | ✅ créées |
+| Credentials MnQ | `mirador` — `39cdedeb-6d47-4cee-8e9a-1e37710501ba` | ✅ (access_key `qZYIi91MEs65STZbiPmn`) |
+| Queue FIFO | `mirador-webhooks.fifo` (+ `-dlq`) | ✅ (VisibilityTimeout 300s, maxReceive 3) — E2E OK |
+| Queue FIFO | `mirador-writes.fifo` (+ `-dlq`) | ✅ (VisibilityTimeout 60s, maxReceive 3) |
+| Bucket Object Storage | `telemach-mirador-audit` | ⏳ **à créer** dans MIRADOR (voir § Bucket) |
 
-Rejouer (idempotent) : `./provision.sh` (utilise `--profile telemach`).
+URLs des queues : `https://sqs.mnq.fr-par.scaleway.com/project-4135267b-fd5a-4079-b716-8b24240deabd/<queue>`.
 
-## ⚠️ Credentials — deux jeux DISTINCTS
+Rejouer MnQ (idempotent) : `./provision.sh`.
 
-Découverte au provisioning réel (invisible aux tests à doubles) :
+## Deux jeux de credentials DISTINCTS (découverte du provisioning réel)
 
-| Usage | Variables | Source | Vérifié |
-|-------|-----------|--------|---------|
-| **SQS / MnQ** (enqueue webhooks) | `MNQ_ACCESS_KEY`, `MNQ_SECRET_KEY` | `scw mnq sqs create-credentials` | ✅ envoi/réception FIFO OK |
-| **S3 / bucket** (writer d'audit) | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | clé IAM avec droit **Object Storage sur le projet LMS** | ❌ **bloqué** |
+| Usage | Variables | Source |
+|-------|-----------|--------|
+| **SQS / MnQ** | `MNQ_ACCESS_KEY`, `MNQ_SECRET_KEY` | `scw mnq sqs create-credentials` |
+| **S3 / bucket** | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | clé API IAM de l'app, scopée MIRADOR |
 
-- Les credentials MnQ **ne** donnent **pas** accès à S3 (et inversement).
-- La clé IAM du profil par défaut voit un autre projet (`strava-synchro-journal`)
-  et reçoit **403 / AccessDenied** sur `telemach-mirador-audit`.
-- **Action requise (Alexandre)** : fournir/créer une clé API IAM ayant la
-  permission Object Storage (lecture + écriture) sur le projet LMS
-  (`0a3e5b10-4caa-4048-a607-f53080c01569`), puis la placer dans
-  `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` de la fonction.
+Les credentials MnQ ne donnent pas accès à S3, et inversement.
 
-  ```bash
-  # Exemple (à adapter aux policies IAM du projet) :
-  scw iam api-key create --profile telemach \
-      description="Mirador Object Storage" \
-      default-project-id=0a3e5b10-4caa-4048-a607-f53080c01569
-  ```
+## § Bucket — pourquoi il n'est pas dans `provision.sh`
+
+`scw object bucket create` **n'a pas** de paramètre `project-id` : le bucket est
+attribué au projet des **credentials S3** utilisées. La clé par défaut vise un
+autre projet (`0a3e5b10`), donc elle crée toujours au mauvais endroit — vérifié.
+
+Le bucket doit donc être créé **avec une clé dont le projet par défaut est
+MIRADOR**. Deux voies :
+
+- **Console (le plus simple)** : créer le bucket `telemach-mirador-audit` en
+  sélectionnant le projet **MIRADOR** dans l'interface.
+- **CLI avec la clé applicative** : après création de la clé (§ IAM), configurer
+  un profil scw avec ses `access_key`/`secret_key` puis `scw object bucket create
+  name=telemach-mirador-audit region=fr-par`. Nécessite temporairement le
+  permission set `ObjectStorageBucketsWrite` sur la policy.
+
+## § IAM — application, policy, clé
+
+Application déjà créée (`fc368266-…`). Reste la policy (scope MIRADOR) et la clé.
+
+```bash
+PROJ=4135267b-fd5a-4079-b716-8b24240deabd
+APP_ID=fc368266-20ae-481c-a40a-d70f1580ec53
+
+# Policy runtime (moindre privilège) — scope projet MIRADOR
+scw iam policy create name=mirador-object-storage \
+  application-id=$APP_ID \
+  rules.0.permission-set-names.0=ObjectStorageReadOnly \
+  rules.0.permission-set-names.1=ObjectStorageObjectsWrite \
+  rules.0.project-ids.0=$PROJ --profile telemach
+
+# Clé API — IMPORTANT : default-project-id sur MIRADOR (sinon buckets/objets
+# iraient dans le mauvais projet)
+scw iam api-key create application-id=$APP_ID \
+  default-project-id=$PROJ \
+  description="Mirador Object Storage" --profile telemach
+```
+
+- `ObjectStorageObjectsDelete` est **volontairement exclu** → le writer ne peut
+  jamais supprimer, ce qui verrouille l'immutabilité au niveau IAM (Principe III).
+- Pour créer le bucket via CLI avec cette clé, ajouter temporairement
+  `ObjectStorageBucketsWrite` à la policy, puis le retirer.
+- L'`access_key` / `secret_key` de la clé → `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY` de la fonction.
 
 ## Variables d'environnement de la fonction
 
@@ -45,9 +84,9 @@ Découverte au provisioning réel (invisible aux tests à doubles) :
 |----------|--------|
 | `BUCKET_NAME` | `telemach-mirador-audit` |
 | `S3_ENDPOINT_URL` | `https://s3.fr-par.scw.cloud` |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | clé IAM Object Storage projet LMS (à fournir) |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | clé API app, scopée MIRADOR (§ IAM) |
 | `SQS_ENDPOINT_URL` | `https://sqs.mnq.fr-par.scaleway.com` |
-| `SQS_QUEUE_URL` | `…/mirador-webhooks.fifo` (sortie de `creer_queues.py`) |
+| `SQS_QUEUE_URL` | `…/project-4135267b-…/mirador-webhooks.fifo` |
 | `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` | credentials MnQ (dans `.secrets.env`) |
 | `AWS_REGION` | `fr-par` |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `WEBHOOK_SECRET` | voir `docs/github-app.md` |
