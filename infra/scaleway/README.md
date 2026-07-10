@@ -64,12 +64,17 @@ scw iam policy create name=mirador-object-storage \
   rules.0.permission-set-names.1=ObjectStorageObjectsWrite \
   rules.0.project-ids.0=$PROJ --profile telemach
 
-# Clé API — IMPORTANT : default-project-id sur MIRADOR (sinon buckets/objets
-# iraient dans le mauvais projet)
+# Clé API — IMPORTANT :
+#  - default-project-id sur MIRADOR (sinon buckets/objets iraient au mauvais projet)
+#  - expires-at OBLIGATOIRE (l'org impose une expiration), format RFC 3339
 scw iam api-key create application-id=$APP_ID \
   default-project-id=$PROJ \
+  expires-at=2027-07-10T00:00:00Z \
   description="Mirador Object Storage" --profile telemach
 ```
+
+> ⏰ La clé expire à la date `expires-at` → la fonction cesse d'écrire dans le
+> bucket ce jour-là. Noter l'échéance et prévoir la rotation ~1 mois avant.
 
 - `ObjectStorageObjectsDelete` est **volontairement exclu** → le writer ne peut
   jamais supprimer, ce qui verrouille l'immutabilité au niveau IAM (Principe III).
