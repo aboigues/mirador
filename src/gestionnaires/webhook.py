@@ -141,6 +141,37 @@ def _construire_message_issue_comment(
     }
 
 
+def traiter_webhook_brut(
+    body: bytes,
+    event_type: str,
+    signature: Optional[str],
+    delivery_id: str,
+    secret: str,
+    resoudre_responsables: Callable[[str], list[str]],
+) -> tuple[int, Optional[dict[str, Any]]]:
+    """Logique métier du webhook, indépendante du transport (FastAPI / serverless).
+
+    Retourne (code_http, message_à_enqueuer_ou_None). Le message n'est présent
+    que pour un code 202 (webhook valide à traiter).
+    """
+    if not _valider_signature(body, signature, secret):
+        return 403, None
+    if event_type not in _EVENEMENTS_TRAITES:
+        return 204, None
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return 400, None
+
+    if event_type == "workflow_run":
+        return 202, _construire_message_workflow_run(payload, delivery_id)
+
+    message = _construire_message_issue_comment(payload, delivery_id, resoudre_responsables)
+    if message is None:
+        return 204, None
+    return 202, message
+
+
 def creer_application(
     enqueue_stub: bool = False,
     enqueue: Optional[Callable[[dict[str, Any]], Any]] = None,
@@ -172,41 +203,22 @@ def creer_application(
     async def recevoir_webhook(request: Request) -> Response:
         secret = os.environ.get("WEBHOOK_SECRET", "")
         body = await request.body()
-
-        signature = request.headers.get("X-Hub-Signature-256")
-        if not _valider_signature(body, signature, secret):
-            log.warning("webhook.signature_invalide",
-                        delivery_id=request.headers.get("X-GitHub-Delivery"))
-            return Response(status_code=403, content='{"erreur": "Signature invalide"}',
-                            media_type="application/json")
-
-        event_type = request.headers.get("X-GitHub-Event", "")
-        if event_type not in _EVENEMENTS_TRAITES:
-            return Response(status_code=204)
-
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            return Response(status_code=400, content='{"erreur": "JSON malformé"}',
-                            media_type="application/json")
-
         delivery_id = request.headers.get("X-GitHub-Delivery", "")
 
-        if event_type == "workflow_run":
-            message = _construire_message_workflow_run(payload, delivery_id)
-        else:  # issue_comment
-            message = _construire_message_issue_comment(payload, delivery_id, _resoudre)
-            if message is None:
-                # Commande ignorée silencieusement (non-responsable, mal formée, etc.)
-                return Response(status_code=204)
-
-        await _enqueue(message)
-
-        log.info("webhook.accepte",
-                 delivery_id=delivery_id,
-                 type=message["type"],
-                 depot=message["depot"])
-
-        return Response(status_code=202)
+        code, message = traiter_webhook_brut(
+            body,
+            request.headers.get("X-GitHub-Event", ""),
+            request.headers.get("X-Hub-Signature-256"),
+            delivery_id,
+            secret,
+            _resoudre,
+        )
+        if code == 403:
+            log.warning("webhook.signature_invalide", delivery_id=delivery_id)
+        if message is not None:
+            await _enqueue(message)
+            log.info("webhook.accepte", delivery_id=delivery_id,
+                     type=message["type"], depot=message["depot"])
+        return Response(status_code=code)
 
     return app
