@@ -141,7 +141,7 @@ class Traitement:
         )
         proposition = await self._correcteur.proposer(anomalie, extrait_log, regle)
 
-        corps = _corps_issue(anomalie, depot_nom)
+        corps = _corps_issue(anomalie, depot_nom, proposition)
         await self._actions.ouvrir_issue(
             depot_nom, depot.installation_id,
             titre=f"[Mirador] Anomalie {anomalie.niveau_risque.name} — "
@@ -288,7 +288,27 @@ def anomalie_branche(anomalie: Anomalie) -> str:
     return "main"
 
 
-def _corps_issue(anomalie: Anomalie, depot_nom: str) -> str:
+def _section_proposition(proposition: Any) -> str:
+    """Rend la proposition d'intervention en Markdown pour le corps de l'issue.
+
+    L'humain voit ainsi ce que Mirador exécuterait sur /approuver — utile aussi
+    quand l'exécution auto échoue (le correctif reste actionnable manuellement).
+    """
+    if proposition is None:
+        return ""
+    if proposition.type == TypeCorrection.PULL_REQUEST:
+        detail = ""
+        if proposition.corps_pr:
+            detail = (f"\n\n<details><summary>Détail de la PR proposée</summary>\n\n"
+                      f"### {proposition.titre_pr or 'Correctif Mirador'}\n\n"
+                      f"{proposition.corps_pr}\n\n</details>")
+        return (f"## Correction proposée par Mirador\n\n"
+                f"**Pull request** — {proposition.justification}{detail}\n\n")
+    return (f"## Correction proposée par Mirador\n\n"
+            f"**Relance du workflow** — {proposition.justification}\n\n")
+
+
+def _corps_issue(anomalie: Anomalie, depot_nom: str, proposition: Any = None) -> str:
     return (
         f"## Anomalie détectée\n\n"
         f"| Champ | Valeur |\n|-------|--------|\n"
@@ -297,6 +317,7 @@ def _corps_issue(anomalie: Anomalie, depot_nom: str) -> str:
         f"| Niveau de risque | {anomalie.niveau_risque.name} |\n"
         f"| Run GitHub | #{anomalie.workflow_run_id} |\n\n"
         f"## Cause identifiée\n\n{anomalie.cause_identifiee or 'Non identifiée automatiquement.'}\n\n"
+        f"{_section_proposition(proposition)}"
         f"Pour valider ou rejeter : `/approuver` ou `/rejeter <motif>`.\n\n"
         f"<!-- mirador:anomalie_id:{anomalie.correlation_id} -->\n"
     )

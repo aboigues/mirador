@@ -245,6 +245,27 @@ class TestEscaladeHumaine:
         assert actions.relances == [] and actions.prs == []
         assert any(e.type_evenement == TypeEvenement.ESCALADE for e in writer.evenements)
 
+    async def test_issue_affiche_la_proposition_relance(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(
+            type=TypeCorrection.RELANCE, justification="incident transitoire réseau"))
+        traitement = _traitement(actions, writer, correcteur)
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        corps = actions.issues_ouvertes[0]["corps"]
+        assert "Correction proposée" in corps
+        assert "incident transitoire réseau" in corps
+
+    async def test_issue_affiche_la_proposition_pull_request(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(
+            type=TypeCorrection.PULL_REQUEST, justification="deps obsolètes",
+            titre_pr="fix: bump deps", corps_pr="## Détail\nMettre à jour X et Y."))
+        traitement = _traitement(actions, writer, correcteur)
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        corps = actions.issues_ouvertes[0]["corps"]
+        assert "fix: bump deps" in corps
+        assert "Mettre à jour X et Y" in corps
+
 
 class TestExecutionSurApprobation:
     async def test_escalade_calcule_et_persiste_la_proposition(self):
