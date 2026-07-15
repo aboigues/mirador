@@ -6,6 +6,8 @@ de commit direct) ; les Issues portent le flux de validation humaine.
 """
 from __future__ import annotations
 
+import io
+import zipfile
 from typing import Any, Optional, Protocol
 
 import httpx
@@ -14,6 +16,28 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _API_VERSION = "2022-11-28"
+
+
+def extraire_texte_logs(contenu: bytes) -> str:
+    """Extrait le texte des logs GitHub à partir des octets renvoyés par l'API.
+
+    L'endpoint `/actions/runs/{id}/logs` renvoie une archive ZIP (un .txt par
+    étape). On concatène le texte de toutes les entrées. Si les octets ne sont
+    pas une archive ZIP valide (logs déjà textuels, doubles de test), on retombe
+    sur un décodage UTF-8 tolérant.
+    """
+    if not contenu:
+        return ""
+    try:
+        with zipfile.ZipFile(io.BytesIO(contenu)) as archive:
+            morceaux = [
+                archive.read(info).decode("utf-8", errors="ignore")
+                for info in archive.infolist()
+                if not info.is_dir()
+            ]
+        return "\n".join(morceaux)
+    except zipfile.BadZipFile:
+        return contenu.decode("utf-8", errors="ignore")
 
 
 class FournisseurToken(Protocol):
