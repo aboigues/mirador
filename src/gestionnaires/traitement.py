@@ -37,6 +37,7 @@ class Traitement:
         writer: Any,
         resoudre_depot: Callable[[str], Optional[tuple[Any, list[RegleDiagnostic]]]],
         deja_traite: Optional[Callable[[str], bool]] = None,
+        lire_proposition: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
     ) -> None:
         self._detecteur = detecteur
         self._superviseur = superviseur
@@ -45,6 +46,7 @@ class Traitement:
         self._writer = writer
         self._resoudre_depot = resoudre_depot
         self._deja_traite = deja_traite
+        self._lire_proposition = lire_proposition
         self._delivery_courant: Optional[str] = None
 
     async def traiter(self, message: dict[str, Any]) -> None:
@@ -95,7 +97,7 @@ class Traitement:
         elif decision == DecisionEscalade.INTERVENTION_AUTO:
             await self._intervenir(anomalie, depot, depot_nom, extrait_log, regles)
         else:  # NOTIFIER_ET_ATTENDRE ou VALIDATION_HUMAINE_REQUISE
-            await self._escalader(anomalie, depot, depot_nom)
+            await self._escalader(anomalie, depot, depot_nom, extrait_log, regles)
 
     async def _intervenir(
         self, anomalie: Anomalie, depot: Any, depot_nom: str,
@@ -127,7 +129,17 @@ class Traitement:
             TypeEvenement.INTERVENTION, anomalie, depot_nom, "SUCCÈS", type_action=action
         )
 
-    async def _escalader(self, anomalie: Anomalie, depot: Any, depot_nom: str) -> None:
+    async def _escalader(
+        self, anomalie: Anomalie, depot: Any, depot_nom: str,
+        extrait_log: str, regles: list[RegleDiagnostic],
+    ) -> None:
+        # Calcule la proposition d'intervention et la PERSISTE dans l'événement
+        # d'escalade : elle sera exécutée telle quelle si un responsable /approuver.
+        regle = next(
+            (r for r in regles if r.id == anomalie.regle_declenchee_id), None
+        )
+        proposition = await self._correcteur.proposer(anomalie, extrait_log, regle)
+
         corps = _corps_issue(anomalie, depot_nom)
         await self._actions.ouvrir_issue(
             depot_nom, depot.installation_id,
@@ -138,7 +150,14 @@ class Traitement:
         )
         anomalie.demarrer_traitement()
         anomalie.escalader()
-        self._journaliser(TypeEvenement.ESCALADE, anomalie, depot_nom, "EN_ATTENTE")
+        self._journaliser(
+            TypeEvenement.ESCALADE, anomalie, depot_nom, "EN_ATTENTE",
+            details={
+                "proposition": proposition.model_dump(),
+                "workflow_run_id": anomalie.workflow_run_id,
+                "head_branch": anomalie_branche(anomalie),
+            },
+        )
 
     # --- validation_humaine --------------------------------------------
 
@@ -153,15 +172,17 @@ class Traitement:
         commande = message.get("commande")
 
         if commande == "approuver":
+            action = await self._executer_proposition_approuvee(message, depot, depot_nom)
             await self._actions.commenter_issue(
                 depot_nom, depot.installation_id, numero,
-                f"✅ Intervention approuvée par @{acteur} — exécution en cours.",
+                _message_approbation(acteur, action),
             )
             await self._actions.fermer_issue(
                 depot_nom, depot.installation_id, numero, label="resolved"
             )
             self._journaliser_validation(
-                TypeEvenement.VALIDATION, message, depot_nom, f"humain:{acteur}"
+                TypeEvenement.VALIDATION, message, depot_nom, f"humain:{acteur}",
+                resultat=action,
             )
         elif commande == "rejeter":
             motif = message.get("motif", "")
@@ -176,11 +197,39 @@ class Traitement:
                 TypeEvenement.REJET, message, depot_nom, f"humain:{acteur}", resultat=motif
             )
 
+    async def _executer_proposition_approuvee(
+        self, message: dict[str, Any], depot: Any, depot_nom: str
+    ) -> Optional[str]:
+        """Exécute la proposition persistée à l'escalade. Retourne le type d'action.
+
+        Retourne None si aucune proposition n'est retrouvée (anciennes issues, ou
+        lecteur non câblé) : dans ce cas l'approbation est simplement enregistrée.
+        """
+        if self._lire_proposition is None:
+            return None
+        details = self._lire_proposition(message.get("anomalie_id", ""))
+        if not details or not details.get("proposition"):
+            return None
+        proposition = details["proposition"]
+        run_id = details.get("workflow_run_id")
+        if proposition.get("type") == TypeCorrection.PULL_REQUEST:
+            await self._actions.creer_pull_request(
+                depot_nom, depot.installation_id,
+                titre=proposition.get("titre_pr") or "fix: correctif Mirador",
+                corps=proposition.get("corps_pr") or proposition.get("justification") or "",
+                branche_source=f"mirador/fix-{run_id}",
+                branche_cible=details.get("head_branch", "main"),
+            )
+            return TypeCorrection.PULL_REQUEST
+        await self._actions.relancer_workflow(depot_nom, run_id, depot.installation_id)
+        return TypeCorrection.RELANCE
+
     # --- journalisation ------------------------------------------------
 
     def _journaliser(
         self, type_evenement: str, anomalie: Anomalie, depot_nom: str,
         statut: str, *, type_action: Optional[str] = None,
+        details: Optional[dict[str, Any]] = None,
     ) -> None:
         self._writer.ecrire([EvenementJournal(
             correlation_id=anomalie.correlation_id,
@@ -192,6 +241,7 @@ class Traitement:
             workflow_run_id=anomalie.workflow_run_id,
             type_anomalie=anomalie.type,
             type_action=type_action,
+            details=details,
             resultat=anomalie.cause_identifiee,
             delivery_id=self._delivery_courant,
         )])
@@ -213,6 +263,15 @@ class Traitement:
         )])
 
 
+def _message_approbation(acteur: str, action: Optional[str]) -> str:
+    if action == TypeCorrection.RELANCE:
+        return f"✅ Approuvé par @{acteur} — workflow relancé par Mirador."
+    if action == TypeCorrection.PULL_REQUEST:
+        return f"✅ Approuvé par @{acteur} — pull request de correction ouverte par Mirador."
+    return (f"✅ Approuvé par @{acteur} — approbation enregistrée "
+            f"(aucune action automatique associée à cette anomalie).")
+
+
 def anomalie_branche(anomalie: Anomalie) -> str:
     """Branche cible d'une PR de correction (par défaut la branche par défaut)."""
     return "main"
@@ -228,5 +287,5 @@ def _corps_issue(anomalie: Anomalie, depot_nom: str) -> str:
         f"| Run GitHub | #{anomalie.workflow_run_id} |\n\n"
         f"## Cause identifiée\n\n{anomalie.cause_identifiee or 'Non identifiée automatiquement.'}\n\n"
         f"Pour valider ou rejeter : `/approuver` ou `/rejeter <motif>`.\n\n"
-        f"<!-- mirador:anomalie_id:{anomalie.id} -->\n"
+        f"<!-- mirador:anomalie_id:{anomalie.correlation_id} -->\n"
     )

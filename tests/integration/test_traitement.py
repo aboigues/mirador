@@ -127,7 +127,8 @@ class _WriterFake:
         return "checksum-factice"
 
 
-def _traitement(actions, writer, correcteur, regles=None, deja_traite=None):
+def _traitement(actions, writer, correcteur, regles=None, deja_traite=None,
+                lire_proposition=None):
     depot = _depot(regles_ids=[r.id for r in (regles or [])])
 
     def resoudre(nom_depot):
@@ -143,6 +144,7 @@ def _traitement(actions, writer, correcteur, regles=None, deja_traite=None):
         writer=writer,
         resoudre_depot=resoudre,
         deja_traite=deja_traite,
+        lire_proposition=lire_proposition,
     )
 
 
@@ -237,8 +239,51 @@ class TestEscaladeHumaine:
         issue = actions.issues_ouvertes[0]
         assert "mirador:anomalie_id:" in issue["corps"]
         assert "mirador" in issue["labels"]
-        assert correcteur.appels == 0  # pas d'intervention auto sur escalade
+        # L'escalade calcule et PERSISTE une proposition (exécutée sur /approuver),
+        # mais ne l'exécute pas encore : ni relance ni PR à ce stade.
+        assert correcteur.appels == 1
+        assert actions.relances == [] and actions.prs == []
         assert any(e.type_evenement == TypeEvenement.ESCALADE for e in writer.evenements)
+
+
+class TestExecutionSurApprobation:
+    async def test_escalade_calcule_et_persiste_la_proposition(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="flaky"))
+        traitement = _traitement(actions, writer, correcteur)
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        esc = next(e for e in writer.evenements if e.type_evenement == TypeEvenement.ESCALADE)
+        assert esc.details["proposition"]["type"] == TypeCorrection.RELANCE
+        assert esc.details["workflow_run_id"] == 12345678
+
+    async def test_approuver_execute_relance(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        details = {"proposition": {"type": TypeCorrection.RELANCE, "justification": "x"},
+                   "workflow_run_id": 555, "head_branch": "main"}
+        traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
+        await traitement.traiter(_message_validation(commande="approuver"))
+        assert actions.relances == [(DEPOT, 555)]
+        assert actions.fermetures[0]["label"] == "resolved"
+        assert "relanc" in actions.commentaires[0]["corps"].lower()
+
+    async def test_approuver_execute_pull_request(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        details = {"proposition": {"type": TypeCorrection.PULL_REQUEST, "justification": "j",
+                                   "titre_pr": "fix: X", "corps_pr": "corps", "correctif": "diff"},
+                   "workflow_run_id": 555, "head_branch": "main"}
+        traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
+        await traitement.traiter(_message_validation(commande="approuver"))
+        assert len(actions.prs) == 1 and actions.relances == []
+
+    async def test_approuver_sans_proposition_ferme_sans_action(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: None)
+        await traitement.traiter(_message_validation(commande="approuver"))
+        assert actions.relances == [] and actions.prs == []
+        assert actions.fermetures[0]["label"] == "resolved"
 
 
 class TestValidationHumaine:

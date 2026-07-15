@@ -9,6 +9,7 @@ import json
 from typing import Any, Optional
 from uuid import UUID
 
+from src.domaine.journal import TypeEvenement
 from src.infrastructure.stockage.bucket import ClientBucket
 from src.infrastructure.stockage.writer import _ouvrir_lecture
 
@@ -55,3 +56,19 @@ class DepotJournal:
                 (delivery_id,),
             )
             return curseur.fetchone() is not None
+
+    def proposition_escalade(self, anomalie_id: str) -> Optional[dict[str, Any]]:
+        """Retourne les `details` du dernier événement ESCALADE pour cet anomalie_id.
+
+        `anomalie_id` correspond au `correlation_id` embarqué dans l'issue Mirador.
+        Permet d'exécuter, sur /approuver, la proposition d'intervention persistée
+        au moment de l'escalade. Retourne None si introuvable ou id invalide.
+        """
+        try:
+            cid = UUID(anomalie_id)
+        except (ValueError, TypeError, AttributeError):
+            return None
+        for evt in reversed(self.lister(correlation_id=cid)):
+            if evt.get("type_evenement") == TypeEvenement.ESCALADE:
+                return evt.get("details")
+        return None

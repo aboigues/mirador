@@ -83,6 +83,7 @@ def construire_traitement(
     detecteur: Optional[Detecteur] = None,
     superviseur: Optional[Superviseur] = None,
     deja_traite: Optional[Callable[[str], bool]] = None,
+    lire_proposition: Optional[Callable[[str], Optional[dict]]] = None,
 ) -> Traitement:
     """Assemble l'orchestrateur avec les I/O fournis et la config des dépôts."""
     return Traitement(
@@ -93,6 +94,7 @@ def construire_traitement(
         writer=writer,
         resoudre_depot=config.resoudre,
         deja_traite=deja_traite,
+        lire_proposition=lire_proposition,
     )
 
 
@@ -138,6 +140,7 @@ def construire_traitement_reel(config: Optional[ConfigDepots] = None) -> Traitem
         writer=WriterAudit(bucket),
         correcteur=Correcteur(_client_anthropic()),
         deja_traite=journal.delivery_deja_traite,
+        lire_proposition=journal.proposition_escalade,
     )
 
 
