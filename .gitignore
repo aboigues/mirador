@@ -18,3 +18,7 @@ mirador-depots.json
 .env*
 **/.secrets.env
 !.env.example
+
+# Fichiers swap d'éditeur (jamais dans le dépôt — peuvent contenir des secrets)
+*.swp
+*.swo
