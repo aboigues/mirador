@@ -1,0 +1,96 @@
+name: Mirador Auto-fix
+
+# Workflow déclenché par Mirador (workflow_dispatch) pour matérialiser un correctif
+# de dépendances Go dans un VRAI environnement de build : met à jour la version Go
+# et/ou des modules, régénère go.mod/go.sum via `go mod tidy`, commite et ouvre la PR.
+# Entrées STRUCTURÉES (pas de commande arbitraire) → sûr contre l'injection.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_branch:
+        description: "Branche de base"
+        required: true
+        default: "main"
+      head_branch:
+        description: "Branche de correction à créer"
+        required: true
+      go_version:
+        description: "Version Go cible (ex. 1.25.12) ; vide si inchangée"
+        required: false
+        default: ""
+      modules:
+        description: "Modules à mettre à jour, séparés par des espaces (path@version)"
+        required: false
+        default: ""
+      titre:
+        description: "Titre de la pull request"
+        required: true
+      corps:
+        description: "Corps de la pull request"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_branch }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version != '' && inputs.go_version || '1.25.x' }}
+
+      - name: Appliquer le correctif de dépendances
+        env:
+          HEAD_BRANCH: ${{ inputs.head_branch }}
+          GO_VERSION: ${{ inputs.go_version }}
+          MODULES: ${{ inputs.modules }}
+        run: |
+          set -euo pipefail
+          git switch -c "$HEAD_BRANCH"
+          if [ -n "$GO_VERSION" ]; then
+            sed -i -E "s/^go [0-9]+\.[0-9]+(\.[0-9]+)?/go ${GO_VERSION}/" go.mod
+          fi
+          if [ -n "$MODULES" ]; then
+            for m in $MODULES; do
+              echo "go get $m"
+              go get "$m"
+            done
+          fi
+          go mod tidy
+
+      - name: Commit + push
+        env:
+          HEAD_BRANCH: ${{ inputs.head_branch }}
+          TITRE: ${{ inputs.titre }}
+        run: |
+          set -euo pipefail
+          git config user.name "mirador-ci-cd[bot]"
+          git config user.email "mirador@users.noreply.github.com"
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "Aucun changement produit — rien à committer." >&2
+            exit 1
+          fi
+          git add -A
+          git commit -m "$TITRE"
+          git push -u origin "$HEAD_BRANCH"
+
+      - name: Ouvrir la pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          HEAD_BRANCH: ${{ inputs.head_branch }}
+          TITRE: ${{ inputs.titre }}
+          CORPS: ${{ inputs.corps }}
+        run: |
+          set -euo pipefail
+          gh pr create --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+            --title "$TITRE" --body "${CORPS:-Correctif automatique matérialisé par Mirador.}"

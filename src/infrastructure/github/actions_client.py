@@ -158,6 +158,21 @@ class GitHubActionsClient:
         log.info("github.pr_creee", depot=depot, numero=donnees.get("number"))
         return donnees
 
+    async def declencher_workflow(
+        self, depot: str, fichier_workflow: str, ref: str,
+        inputs: dict[str, str], installation_id: int,
+    ) -> None:
+        """Déclenche un workflow (workflow_dispatch) avec des entrées.
+
+        Utilisé pour déléguer la matérialisation d'un correctif à un vrai
+        environnement de build (le workflow tourne dans le dépôt surveillé).
+        """
+        await self._requete(
+            "POST", f"/repos/{depot}/actions/workflows/{fichier_workflow}/dispatches",
+            installation_id, json={"ref": ref, "inputs": inputs},
+        )
+        log.info("github.workflow_declenche", depot=depot, workflow=fichier_workflow, ref=ref)
+
     # --- Matérialisation d'un correctif (branche + fichiers) ------------
 
     async def obtenir_sha_tete(self, depot: str, branche: str, installation_id: int) -> str:

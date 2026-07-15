@@ -40,6 +40,12 @@ class FichierCorrectif(BaseModel):
     contenu: str  # contenu COMPLET du fichier après correction
 
 
+class MiseAJourDeps(BaseModel):
+    """Correctif de dépendances Go, matérialisé par un vrai build (go mod tidy)."""
+    go_version: Optional[str] = None  # ex. "1.25.12" ; None si inchangée
+    modules: list[str] = []  # ex. ["golang.org/x/net@v0.55.0"]
+
+
 class PropositionCorrection(BaseModel):
     type: str
     justification: str
@@ -49,6 +55,9 @@ class PropositionCorrection(BaseModel):
     # Fichiers à écrire sur la branche de correction (contenu complet). Optionnel :
     # si vide, Mirador ouvre quand même une PR documentant le correctif à appliquer.
     fichiers: Optional[list[FichierCorrectif]] = None
+    # Correctif de dépendances Go → délégué à un workflow de build réel (go mod tidy)
+    # qui régénère go.mod/go.sum correctement. Préféré aux `fichiers` pour les deps.
+    mise_a_jour: Optional[MiseAJourDeps] = None
 
 
 # Schéma de sortie structurée imposé au modèle
@@ -72,6 +81,14 @@ _SCHEMA_PROPOSITION: dict[str, Any] = {
                 "additionalProperties": False,
             },
         },
+        "mise_a_jour": {
+            "type": "object",
+            "properties": {
+                "go_version": {"type": "string"},
+                "modules": {"type": "array", "items": {"type": "string"}},
+            },
+            "additionalProperties": False,
+        },
     },
     "required": ["type", "justification"],
     "additionalProperties": False,
@@ -87,7 +104,11 @@ _SYSTEME = (
     "contenu COMPLET après correction (chemin + contenu), pour que la PR soit ouverte "
     "automatiquement. N'inclus dans `fichiers` que des fichiers que tu peux produire "
     "intégralement et correctement ; sinon laisse `fichiers` vide et décris le "
-    "correctif dans le corps. Réponds en français."
+    "correctif dans le corps. Pour un correctif de DÉPENDANCES Go (mise à jour du "
+    "toolchain et/ou de modules), n'édite PAS go.mod/go.sum toi-même (go.sum n'est "
+    "pas calculable sans build) : renseigne plutôt `mise_a_jour` (go_version cible "
+    "et/ou modules « chemin@version »), et Mirador régénérera go.mod/go.sum via un "
+    "vrai build. Réponds en français."
 )
 
 
