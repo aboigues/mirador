@@ -23,6 +23,9 @@ env:
   SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
   SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
   SCW_DEFAULT_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+  # Org id : identifiant non sensible, requis par certaines commandes scw (ex.
+  # `function namespace list`) quand aucun fichier de config n'est présent (CI).
+  SCW_DEFAULT_ORGANIZATION_ID: 0a3e5b10-4caa-4048-a607-f53080c01569
   SCW_DEFAULT_REGION: fr-par
   SCW_PROFILE: "" # utilise les credentials d'environnement, pas un profil
 
