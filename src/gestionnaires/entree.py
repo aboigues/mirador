@@ -82,6 +82,7 @@ def construire_traitement(
     correcteur: Any,
     detecteur: Optional[Detecteur] = None,
     superviseur: Optional[Superviseur] = None,
+    deja_traite: Optional[Callable[[str], bool]] = None,
 ) -> Traitement:
     """Assemble l'orchestrateur avec les I/O fournis et la config des dépôts."""
     return Traitement(
@@ -91,6 +92,7 @@ def construire_traitement(
         actions=actions,
         writer=writer,
         resoudre_depot=config.resoudre,
+        deja_traite=deja_traite,
     )
 
 
@@ -124,15 +126,18 @@ def creer_app_webhook(config: Optional[ConfigDepots] = None) -> FastAPI:
 def construire_traitement_reel(config: Optional[ConfigDepots] = None) -> Traitement:
     """Câble l'orchestrateur avec les vrais clients (échoue vite si un secret manque)."""
     from src.agents.correcteur import Correcteur
+    from src.infrastructure.stockage.depots import DepotJournal
     from src.infrastructure.stockage.writer import WriterAudit
 
     config = config or ConfigDepots.depuis_env()
     bucket = _client_bucket()
+    journal = DepotJournal(bucket)
     return construire_traitement(
         config,
         actions=_client_actions(),
         writer=WriterAudit(bucket),
         correcteur=Correcteur(_client_anthropic()),
+        deja_traite=journal.delivery_deja_traite,
     )
 
 

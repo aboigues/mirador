@@ -17,7 +17,8 @@ from src.infrastructure.stockage.writer import WriterAudit
 CLE_BD = "mirador.db"
 
 
-def _evenement(depot: str = "aboigues/k8t", statut: str = "SUCCÈS") -> EvenementJournal:
+def _evenement(depot: str = "aboigues/k8t", statut: str = "SUCCÈS",
+               delivery_id: str = None) -> EvenementJournal:
     return EvenementJournal(
         correlation_id=uuid4(),
         type_evenement=TypeEvenement.DETECTION,
@@ -29,6 +30,7 @@ def _evenement(depot: str = "aboigues/k8t", statut: str = "SUCCÈS") -> Evenemen
         type_anomalie="ÉCHEC",
         details={"regle": "timeout-connexion-bd"},
         resultat="anomalie détectée",
+        delivery_id=delivery_id,
     )
 
 
@@ -93,6 +95,25 @@ class TestImmutabiliteAppendOnly:
         ids = [ligne["id"] for ligne in depot.lister()]
         assert ids == sorted(ids)
         assert len(set(ids)) == len(ids)
+
+
+class TestDeduplicationDeliveryId:
+    def test_delivery_id_persiste(self, writer, depot):
+        writer.ecrire([_evenement(delivery_id="livr-001")])
+        assert depot.lister()[0]["delivery_id"] == "livr-001"
+
+    def test_delivery_deja_traite_vrai_apres_ecriture(self, writer, depot):
+        assert depot.delivery_deja_traite("livr-XYZ") is False
+        writer.ecrire([_evenement(delivery_id="livr-XYZ")])
+        assert depot.delivery_deja_traite("livr-XYZ") is True
+
+    def test_delivery_deja_traite_faux_pour_id_absent(self, writer, depot):
+        writer.ecrire([_evenement(delivery_id="livr-A")])
+        assert depot.delivery_deja_traite("livr-B") is False
+
+    def test_delivery_deja_traite_sur_base_absente(self, depot):
+        # Aucune écriture encore : la base n'existe pas dans le bucket.
+        assert depot.delivery_deja_traite("nimporte") is False
 
 
 class TestChecksum:

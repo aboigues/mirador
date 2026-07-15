@@ -62,7 +62,7 @@ SCW_PROFILE="$PROFILE" bash "$ICI/update_code.sh" "$TRAITEMENT_ID"
 SCW_PROFILE="$PROFILE" bash "$ICI/update_code.sh" "$WEBHOOK_ID"
 
 if [ "$PURGE" = "demander" ]; then
-  read -r -p "Purger mirador-webhooks.fifo + DLQ (messages poison du test précédent) ? [o/N] " rep
+  read -r -p "Purger mirador-webhooks + DLQ (messages poison du test précédent) ? [o/N] " rep
   case "$rep" in o|O) PURGE="oui" ;; *) PURGE="non" ;; esac
 fi
 if [ "$PURGE" = "oui" ]; then

@@ -16,8 +16,13 @@ séparé du reste). Accès via le profil CLI `telemach`.
 |-----------|----------|------|
 | MnQ SQS | service | ✅ activé (`https://sqs.mnq.fr-par.scaleway.com`) |
 | Credentials MnQ | `mirador` — `39cdedeb-6d47-4cee-8e9a-1e37710501ba` | ✅ (access_key `qZYIi91MEs65STZbiPmn`) |
-| Queue FIFO | `mirador-webhooks.fifo` (+ `-dlq`) | ✅ (VisibilityTimeout 300s, maxReceive 3) — E2E OK |
-| Queue FIFO | `mirador-writes.fifo` (+ `-dlq`) | ✅ (VisibilityTimeout 60s, maxReceive 3) |
+| Queue standard | `mirador-webhooks` (+ `-dlq`) | ✅ (VisibilityTimeout 300s, maxReceive 3) — trigger scw_sqs OK |
+| Queue standard | `mirador-writes` (+ `-dlq`) | ✅ (VisibilityTimeout 60s, maxReceive 3) |
+
+> ⚠️ **Queues STANDARD, pas FIFO** : les triggers `scw_sqs` de Scaleway Functions
+> ne consomment pas les files FIFO (messages non délivrés au handler → DLQ). La
+> déduplication est faite côté consommateur (idempotence par `delivery_id` dans le
+> pipeline de traitement).
 | Bucket Object Storage | `telemach-mirador-audit` | ⏳ **à créer** dans MIRADOR (voir § Bucket) |
 
 URLs des queues : `https://sqs.mnq.fr-par.scaleway.com/project-4135267b-fd5a-4079-b716-8b24240deabd/<queue>`.
@@ -91,7 +96,7 @@ scw iam api-key create application-id=$APP_ID \
 | `S3_ENDPOINT_URL` | `https://s3.fr-par.scw.cloud` |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | clé API app, scopée MIRADOR (§ IAM) |
 | `SQS_ENDPOINT_URL` | `https://sqs.mnq.fr-par.scaleway.com` |
-| `SQS_QUEUE_URL` | `…/project-4135267b-…/mirador-webhooks.fifo` |
+| `SQS_QUEUE_URL` | `…/project-4135267b-…/mirador-webhooks` (queue standard) |
 | `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` | credentials MnQ (dans `.secrets.env`) |
 | `AWS_REGION` | `fr-par` |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `WEBHOOK_SECRET` | voir `docs/github-app.md` |
@@ -111,7 +116,7 @@ Deux fonctions Scaleway dans le namespace `mirador` (projet MIRADOR) :
 
 > `traitement` est plafonné à **max-scale 1** : le writer d'audit est unique
 > (sérialisation des écritures SQLite → immutabilité). Un trigger SQS le déclenche
-> sur `mirador-webhooks.fifo`.
+> sur `mirador-webhooks` (queue standard).
 
 ### Déploiement initial (une fois)
 
@@ -161,7 +166,7 @@ Ce qu'il fait :
    d'abord (le consommateur corrigé doit précéder tout nouvel événement), puis
    `webhook`. Ne touche pas aux secrets.
 3. Propose de **purger** les messages poison restés bloqués d'un test précédent
-   (queue `mirador-webhooks.fifo` + sa DLQ), via `purger_queues.py`.
+   (queue `mirador-webhooks` + sa DLQ), via `purger_queues.py`.
 4. Affiche l'URL du webhook, les étapes du re-test E2E réel et les commandes de
    vérification (logs de la fonction, profondeur des queues, issues ouvertes).
 

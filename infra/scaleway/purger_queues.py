@@ -12,7 +12,7 @@ Chargés depuis l'environnement — typiquement `source infra/scaleway/.secrets.
 Endpoint par défaut : https://sqs.mnq.fr-par.scaleway.com (SQS_ENDPOINT_URL).
 
 Usage :
-    python purger_queues.py                 # purge mirador-webhooks.fifo + sa DLQ
+    python purger_queues.py                 # purge mirador-webhooks + sa DLQ
     python purger_queues.py mirador-writes  # purge une autre paire (+ DLQ)
 """
 from __future__ import annotations
@@ -68,7 +68,7 @@ def _purger(sqs, nom: str) -> None:
 def main() -> None:
     base = sys.argv[1] if len(sys.argv) > 1 else "mirador-webhooks"
     sqs = _client()
-    for nom in (f"{base}.fifo", f"{base}-dlq.fifo"):
+    for nom in (base, f"{base}-dlq"):
         _purger(sqs, nom)
 
 

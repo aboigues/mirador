@@ -27,7 +27,7 @@ def captures(monkeypatch):
     monkeypatch.setenv("MNQ_SECRET_KEY", "mnq-sk")
     monkeypatch.setenv(
         "SQS_QUEUE_URL",
-        "https://sqs.mnq.fr-par.scaleway.com/project-x/mirador-webhooks.fifo",
+        "https://sqs.mnq.fr-par.scaleway.com/project-x/mirador-webhooks",
     )
     return etat
 
@@ -41,9 +41,13 @@ async def test_client_utilise_les_credentials_mnq(captures):
     assert client["endpoint_url"].endswith("sqs.mnq.fr-par.scaleway.com")
 
 
-async def test_message_fifo(captures):
+async def test_message_standard_sans_params_fifo(captures):
+    # Queue STANDARD (non-FIFO) : les triggers scw_sqs de Scaleway ne consomment
+    # pas les files FIFO. MessageGroupId/MessageDeduplicationId sont invalides sur
+    # une queue standard et provoqueraient une erreur SQS.
     await enqueuer_sqs({"delivery_id": "abc-123", "type": "validation_humaine"})
     send = captures["send"]
-    assert send["MessageGroupId"] == "webhooks"
-    assert send["MessageDeduplicationId"] == "abc-123"
-    assert send["QueueUrl"].endswith("mirador-webhooks.fifo")
+    assert "MessageGroupId" not in send
+    assert "MessageDeduplicationId" not in send
+    assert send["QueueUrl"].endswith("mirador-webhooks")
+    assert '"delivery_id": "abc-123"' in send["MessageBody"]

@@ -97,10 +97,10 @@ deployer_fonction() {
 WEBHOOK_ID=$(deployer_fonction webhook handler.webhook public 256 30s 5 | tail -1)
 TRAITEMENT_ID=$(deployer_fonction traitement handler.traitement private 512 300s 1 | tail -1)
 
-echo "== Trigger SQS (traitement ← mirador-webhooks.fifo) =="
+echo "== Trigger SQS (traitement ← mirador-webhooks) =="
 if ! scw function trigger list function-id="$TRAITEMENT_ID" region="$REGION" -o json | grep -q mirador-webhooks; then
   scw function trigger create name=mirador-webhooks function-id="$TRAITEMENT_ID" \
-    scw-sqs-config.queue=mirador-webhooks.fifo \
+    scw-sqs-config.queue=mirador-webhooks \
     scw-sqs-config.mnq-project-id="$PROJECT_ID" \
     scw-sqs-config.mnq-region="$REGION" region="$REGION" >/dev/null
   echo "   créé"

@@ -126,6 +126,21 @@ class TestCablage:
         })
         assert writer.evenements == []
 
+    async def test_deja_traite_est_transmis(self):
+        config = ConfigDepots(charger_depots(json.dumps(_CONFIG)))
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.telecharger_logs = lambda *a, **k: _coro(b"Error: connection timeout after 30s")
+        traitement = construire_traitement(
+            config, actions=actions, writer=writer, correcteur=_CorrecteurFake(),
+            deja_traite=lambda _id: True,
+        )
+        await traitement.traiter({
+            "type": "workflow_run", "delivery_id": "550e8400-e29b-41d4-a716-446655440009",
+            "depot": DEPOT, "workflow_run_id": 99, "workflow_nom": "CI",
+            "conclusion": "failure", "head_branch": "feature/x",
+        })
+        assert actions.relances == [] and writer.evenements == []
+
     async def test_traitement_relance_sur_echec_connu(self):
         config = ConfigDepots(charger_depots(json.dumps(_CONFIG)))
         actions, writer = _ActionsFake(), _WriterFake()

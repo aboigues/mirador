@@ -1,11 +1,12 @@
 """Crée les queues MnQ (SQS-compatible) de Mirador, idempotent.
 
-Deux paires de queues FIFO, chacune avec sa dead-letter queue :
-- mirador-webhooks(.fifo)  : événements GitHub validés (VisibilityTimeout 300s)
-- mirador-writes(.fifo)    : écritures sérialisées vers le writer d'audit (60s)
+Deux paires de queues STANDARD, chacune avec sa dead-letter queue :
+- mirador-webhooks  : événements GitHub validés (VisibilityTimeout 300s)
+- mirador-writes    : écritures sérialisées vers le writer d'audit (60s)
 
-Les queues sont FIFO car les producteurs fournissent MessageGroupId +
-MessageDeduplicationId (déduplication par delivery_id / delivery interne).
+Queues STANDARD (non FIFO) : les triggers scw_sqs de Scaleway Functions ne
+consomment pas les files FIFO. La déduplication est assurée côté consommateur
+(idempotence par delivery_id dans le pipeline de traitement).
 
 Credentials : via l'environnement (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY),
 ou un fichier JSON de credentials MnQ passé en argument (clés access_key/secret_key).
@@ -45,11 +46,13 @@ def _client():
 
 
 def _creer(sqs, nom: str, attributs: dict[str, str]) -> tuple[str, str]:
-    """Crée une queue FIFO (idempotent) et retourne (url, arn)."""
-    url = sqs.create_queue(
-        QueueName=f"{nom}.fifo",
-        Attributes={"FifoQueue": "true", **attributs},
-    )["QueueUrl"]
+    """Crée une queue STANDARD (idempotent) et retourne (url, arn).
+
+    STANDARD et non FIFO : les triggers scw_sqs de Scaleway Functions ne
+    consomment pas les files FIFO. La déduplication est assurée côté consommateur
+    (idempotence par delivery_id dans le pipeline de traitement).
+    """
+    url = sqs.create_queue(QueueName=nom, Attributes=attributs)["QueueUrl"]
     arn = sqs.get_queue_attributes(QueueUrl=url, AttributeNames=["QueueArn"])[
         "Attributes"]["QueueArn"]
     return url, arn
@@ -68,7 +71,7 @@ def main() -> None:
             ),
         })
         resultats[nom] = url
-        print(f"✅ {nom}.fifo (+ DLQ) → {url}")
+        print(f"✅ {nom} (+ DLQ) → {url}")
 
     print("\n# À reporter dans les variables d'environnement de la fonction :")
     print(f"SQS_QUEUE_URL={resultats['mirador-webhooks']}")
