@@ -141,6 +141,46 @@ sans toucher aux secrets. Manuellement :
 `SCW_SECRET_KEY`, `SCW_PROJECT_ID` (= projet MIRADOR). Le CD ne connaît pas les
 secrets applicatifs — ils restent sur les fonctions.
 
+### Re-déploiement après un correctif (`redeploy.sh`)
+
+Tant que les secrets `SCW_*` ne sont pas configurés, le CD automatique échoue :
+après le merge d'un fix, le redéploiement est **manuel**. `redeploy.sh` enchaîne
+les étapes et affiche la marche à suivre pour le re-test E2E :
+
+```bash
+./infra/scaleway/redeploy.sh            # redéploie les 2 fonctions, puis propose de purger
+./infra/scaleway/redeploy.sh --sans-purge   # redéploie seulement
+./infra/scaleway/redeploy.sh --oui      # redéploie + purge sans confirmation
+```
+
+Ce qu'il fait :
+
+1. Résout les IDs des fonctions `webhook` / `traitement` par leur nom (pas d'ID
+   en dur) dans le namespace `mirador`.
+2. Redéploie le **code** des deux fonctions via `update_code.sh` — `traitement`
+   d'abord (le consommateur corrigé doit précéder tout nouvel événement), puis
+   `webhook`. Ne touche pas aux secrets.
+3. Propose de **purger** les messages poison restés bloqués d'un test précédent
+   (queue `mirador-webhooks.fifo` + sa DLQ), via `purger_queues.py`.
+4. Affiche l'URL du webhook, les étapes du re-test E2E réel et les commandes de
+   vérification (logs de la fonction, profondeur des queues, issues ouvertes).
+
+> Prérequis : `.secrets.env` rempli (les credentials MnQ servent à la purge) et
+> le profil scw `telemach`.
+
+#### Purge des queues (`purger_queues.py`)
+
+Vide une paire de queues (principale + DLQ) — utile avant un re-test pour ne pas
+rejouer d'anciens messages. **Irréversible**, et limité à un appel par minute et
+par queue (`PurgeQueue`). Utilise les credentials MnQ (`MNQ_ACCESS_KEY` /
+`MNQ_SECRET_KEY`) chargés depuis `.secrets.env` :
+
+```bash
+set -a && . infra/scaleway/.secrets.env && set +a
+python infra/scaleway/purger_queues.py                # mirador-webhooks + DLQ
+python infra/scaleway/purger_queues.py mirador-writes # autre paire
+```
+
 ### Contraintes du runtime (découvertes au 1er déploiement réel)
 
 - **Runtime = Alpine Linux / musl** (`EXT_SUFFIX = …-linux-musl.so`). Les wheels
