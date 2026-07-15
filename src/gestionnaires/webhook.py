@@ -19,11 +19,14 @@ _SQS_ENDPOINT_DEFAUT = "https://sqs.mnq.fr-par.scaleway.com"
 
 
 async def enqueuer_sqs(message: dict[str, Any], env: Optional[dict[str, str]] = None) -> None:
-    """Publie un message dans la queue MnQ (FIFO).
+    """Publie un message dans la queue MnQ (STANDARD).
 
     MnQ exige ses propres credentials (MNQ_ACCESS_KEY / MNQ_SECRET_KEY), distincts
-    des clés IAM du bucket Object Storage. Queue FIFO → MessageGroupId obligatoire
-    et déduplication par delivery_id.
+    des clés IAM du bucket Object Storage. Queue STANDARD (non-FIFO) : les triggers
+    scw_sqs de Scaleway Functions ne consomment pas les files FIFO. On n'envoie donc
+    ni MessageGroupId ni MessageDeduplicationId (invalides hors FIFO) ; la
+    déduplication est assurée côté consommateur, par delivery_id (idempotence du
+    pipeline de traitement).
     """
     env = env if env is not None else os.environ
     sqs = boto3.client(
@@ -36,8 +39,6 @@ async def enqueuer_sqs(message: dict[str, Any], env: Optional[dict[str, str]] = 
     sqs.send_message(
         QueueUrl=env["SQS_QUEUE_URL"],
         MessageBody=json.dumps(message),
-        MessageDeduplicationId=message.get("delivery_id", ""),
-        MessageGroupId="webhooks",
     )
 
 _EVENEMENTS_TRAITES = {"workflow_run", "issue_comment"}

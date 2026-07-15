@@ -29,6 +29,7 @@ class EvenementJournal(BaseModel):
     type_action: Optional[str] = None
     details: Optional[dict[str, Any]] = None
     resultat: Optional[str] = None
+    delivery_id: Optional[str] = None
     horodatage: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = {"frozen": True}

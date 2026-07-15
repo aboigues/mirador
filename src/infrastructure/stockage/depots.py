@@ -39,3 +39,19 @@ class DepotJournal:
                     "SELECT * FROM journal_evenements ORDER BY id"
                 )
             return [_ligne_en_dict(ligne) for ligne in curseur.fetchall()]
+
+    def delivery_deja_traite(self, delivery_id: str) -> bool:
+        """Indique si un événement a déjà été journalisé pour ce delivery_id.
+
+        Support de l'idempotence : la queue standard peut livrer un message plus
+        d'une fois. Si le pipeline a déjà journalisé ce delivery_id, on ne le
+        retraite pas (pas de double issue / double intervention).
+        """
+        if not delivery_id:
+            return False
+        with _ouvrir_lecture(self._bucket, self._cle_bd) as conn:
+            curseur = conn.execute(
+                "SELECT 1 FROM journal_evenements WHERE delivery_id = ? LIMIT 1",
+                (delivery_id,),
+            )
+            return curseur.fetchone() is not None

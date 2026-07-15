@@ -127,7 +127,7 @@ class _WriterFake:
         return "checksum-factice"
 
 
-def _traitement(actions, writer, correcteur, regles=None):
+def _traitement(actions, writer, correcteur, regles=None, deja_traite=None):
     depot = _depot(regles_ids=[r.id for r in (regles or [])])
 
     def resoudre(nom_depot):
@@ -142,6 +142,7 @@ def _traitement(actions, writer, correcteur, regles=None):
         actions=actions,
         writer=writer,
         resoudre_depot=resoudre,
+        deja_traite=deja_traite,
     )
 
 
@@ -196,6 +197,33 @@ class TestInterventionAuto:
         await traitement.traiter(_message_workflow())
         assert len(actions.prs) == 1
         assert actions.relances == []
+
+
+class TestDeduplicationDeliveryId:
+    async def test_message_deja_traite_est_ignore(self):
+        # deja_traite renvoie True → aucune action ni journalisation.
+        actions, writer = _ActionsFake(logs=b"connection timeout"), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        traitement = _traitement(actions, writer, correcteur, regles=[_regle_relance()],
+                                 deja_traite=lambda _id: True)
+        message = _message_workflow()
+        message["delivery_id"] = "livr-deja-vu"
+        await traitement.traiter(message)
+        assert actions.relances == []
+        assert writer.evenements == []
+
+    async def test_message_neuf_est_traite_et_estampille(self):
+        actions, writer = _ActionsFake(logs=b"connection timeout"), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        traitement = _traitement(actions, writer, correcteur, regles=[_regle_relance()],
+                                 deja_traite=lambda _id: False)
+        message = _message_workflow()
+        message["delivery_id"] = "livr-neuf"
+        await traitement.traiter(message)
+        assert actions.relances == [(DEPOT, 12345678)]
+        # Le delivery_id est estampillé sur les événements journalisés (dédup future).
+        assert all(e.delivery_id == "livr-neuf" for e in writer.evenements)
+        assert writer.evenements
 
 
 class TestEscaladeHumaine:

@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS journal_evenements (
     acteur          TEXT    NOT NULL,
     statut          TEXT    NOT NULL,
     details         TEXT,
-    resultat        TEXT
+    resultat        TEXT,
+    delivery_id     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_journal_correlation
     ON journal_evenements (correlation_id);
@@ -29,5 +30,15 @@ CREATE INDEX IF NOT EXISTS idx_journal_correlation
 
 
 def initialiser_schema(conn: sqlite3.Connection) -> None:
-    """Crée les tables et index si absents. Idempotent."""
+    """Crée les tables et index si absents, et migre les bases existantes. Idempotent."""
     conn.executescript(DDL_JOURNAL)
+    # Migration idempotente : delivery_id a été ajouté après coup ; les bases
+    # créées avant (CREATE TABLE IF NOT EXISTS n'ajoute pas de colonne) reçoivent
+    # la colonne ici. Sert à la déduplication des messages (queue standard).
+    colonnes = {ligne[1] for ligne in conn.execute("PRAGMA table_info(journal_evenements)")}
+    if "delivery_id" not in colonnes:
+        conn.execute("ALTER TABLE journal_evenements ADD COLUMN delivery_id TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_journal_delivery "
+        "ON journal_evenements (delivery_id)"
+    )

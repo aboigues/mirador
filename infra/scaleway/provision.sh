@@ -34,7 +34,7 @@ SK="$(echo "$CREDS_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin
 } > "$SECRETS_FILE"
 echo "   credentials MnQ écrites dans $SECRETS_FILE (access_key: $AK)"
 
-echo "== 3. Queues FIFO (mirador-webhooks, mirador-writes + DLQ) =="
+echo "== 3. Queues standard (mirador-webhooks, mirador-writes + DLQ) =="
 python3 "$(dirname "$0")/creer_queues.py" <(echo "$CREDS_JSON")
 
 echo

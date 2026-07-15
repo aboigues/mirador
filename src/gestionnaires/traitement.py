@@ -36,6 +36,7 @@ class Traitement:
         actions: Any,
         writer: Any,
         resoudre_depot: Callable[[str], Optional[tuple[Any, list[RegleDiagnostic]]]],
+        deja_traite: Optional[Callable[[str], bool]] = None,
     ) -> None:
         self._detecteur = detecteur
         self._superviseur = superviseur
@@ -43,8 +44,18 @@ class Traitement:
         self._actions = actions
         self._writer = writer
         self._resoudre_depot = resoudre_depot
+        self._deja_traite = deja_traite
+        self._delivery_courant: Optional[str] = None
 
     async def traiter(self, message: dict[str, Any]) -> None:
+        delivery_id = message.get("delivery_id")
+        # Idempotence (queue standard, livraison au moins une fois) : si ce
+        # delivery_id a déjà été journalisé, on ne le retraite pas.
+        if self._deja_traite is not None and delivery_id and self._deja_traite(delivery_id):
+            log.info("traitement.deja_traite", delivery_id=delivery_id)
+            return
+        self._delivery_courant = delivery_id
+
         type_message = message.get("type")
         if type_message == "workflow_run":
             await self._traiter_workflow_run(message)
@@ -182,6 +193,7 @@ class Traitement:
             type_anomalie=anomalie.type,
             type_action=type_action,
             resultat=anomalie.cause_identifiee,
+            delivery_id=self._delivery_courant,
         )])
 
     def _journaliser_validation(
@@ -197,6 +209,7 @@ class Traitement:
             acteur=acteur,
             statut="SUCCÈS",
             resultat=resultat,
+            delivery_id=self._delivery_courant,
         )])
 
 

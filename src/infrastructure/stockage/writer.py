@@ -27,7 +27,7 @@ log = structlog.get_logger(__name__)
 _COLONNES = (
     "horodatage", "correlation_id", "type_evenement", "niveau_risque", "depot",
     "workflow_run_id", "type_anomalie", "type_action", "acteur", "statut",
-    "details", "resultat",
+    "details", "resultat", "delivery_id",
 )
 
 
@@ -45,6 +45,7 @@ def _ligne_depuis_evenement(evt: EvenementJournal) -> tuple:
         evt.statut,
         json.dumps(evt.details, ensure_ascii=False) if evt.details is not None else None,
         evt.resultat,
+        evt.delivery_id,
     )
 
 
