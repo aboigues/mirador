@@ -6,6 +6,7 @@ de commit direct) ; les Issues portent le flux de validation humaine.
 """
 from __future__ import annotations
 
+import base64
 import io
 import zipfile
 from typing import Any, Optional, Protocol
@@ -156,3 +157,47 @@ class GitHubActionsClient:
         donnees = reponse.json()
         log.info("github.pr_creee", depot=depot, numero=donnees.get("number"))
         return donnees
+
+    # --- Matérialisation d'un correctif (branche + fichiers) ------------
+
+    async def obtenir_sha_tete(self, depot: str, branche: str, installation_id: int) -> str:
+        """SHA du dernier commit d'une branche (pour créer une branche dérivée)."""
+        reponse = await self._requete(
+            "GET", f"/repos/{depot}/git/ref/heads/{branche}", installation_id
+        )
+        return reponse.json()["object"]["sha"]
+
+    async def creer_branche(
+        self, depot: str, nom_branche: str, sha_base: str, installation_id: int
+    ) -> None:
+        """Crée une branche à partir d'un SHA de base."""
+        await self._requete(
+            "POST", f"/repos/{depot}/git/refs", installation_id,
+            json={"ref": f"refs/heads/{nom_branche}", "sha": sha_base},
+        )
+        log.info("github.branche_creee", depot=depot, branche=nom_branche)
+
+    async def televerser_fichier(
+        self, depot: str, chemin: str, contenu: str, branche: str,
+        message: str, installation_id: int,
+    ) -> None:
+        """Crée ou met à jour un fichier sur une branche (Contents API)."""
+        sha_existant: Optional[str] = None
+        try:
+            actuel = await self._requete(
+                "GET", f"/repos/{depot}/contents/{chemin}?ref={branche}", installation_id
+            )
+            sha_existant = actuel.json().get("sha")
+        except httpx.HTTPStatusError:
+            sha_existant = None  # fichier absent → création
+        corps: dict[str, Any] = {
+            "message": message,
+            "content": base64.b64encode(contenu.encode("utf-8")).decode("ascii"),
+            "branch": branche,
+        }
+        if sha_existant is not None:
+            corps["sha"] = sha_existant
+        await self._requete(
+            "PUT", f"/repos/{depot}/contents/{chemin}", installation_id, json=corps
+        )
+        log.info("github.fichier_ecrit", depot=depot, chemin=chemin, branche=branche)
