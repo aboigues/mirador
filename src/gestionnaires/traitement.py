@@ -24,6 +24,7 @@ from src.infrastructure.github.actions_client import extraire_texte_logs
 log = structlog.get_logger(__name__)
 
 _ACTEUR_AGENT = "mirador-agent"
+_ACTION_ECHEC = "ÉCHEC_EXÉCUTION"
 
 
 class Traitement:
@@ -212,17 +213,24 @@ class Traitement:
             return None
         proposition = details["proposition"]
         run_id = details.get("workflow_run_id")
-        if proposition.get("type") == TypeCorrection.PULL_REQUEST:
-            await self._actions.creer_pull_request(
-                depot_nom, depot.installation_id,
-                titre=proposition.get("titre_pr") or "fix: correctif Mirador",
-                corps=proposition.get("corps_pr") or proposition.get("justification") or "",
-                branche_source=f"mirador/fix-{run_id}",
-                branche_cible=details.get("head_branch", "main"),
-            )
-            return TypeCorrection.PULL_REQUEST
-        await self._actions.relancer_workflow(depot_nom, run_id, depot.installation_id)
-        return TypeCorrection.RELANCE
+        try:
+            if proposition.get("type") == TypeCorrection.PULL_REQUEST:
+                await self._actions.creer_pull_request(
+                    depot_nom, depot.installation_id,
+                    titre=proposition.get("titre_pr") or "fix: correctif Mirador",
+                    corps=proposition.get("corps_pr") or proposition.get("justification") or "",
+                    branche_source=f"mirador/fix-{run_id}",
+                    branche_cible=details.get("head_branch", "main"),
+                )
+                return TypeCorrection.PULL_REQUEST
+            await self._actions.relancer_workflow(depot_nom, run_id, depot.installation_id)
+            return TypeCorrection.RELANCE
+        except Exception as exc:
+            # L'approbation reste valable même si l'exécution auto échoue (ex. PR
+            # sur une branche non matérialisée) : on ne fait pas planter le flux.
+            log.warning("validation.execution_echouee",
+                        type=proposition.get("type"), err=str(exc))
+            return _ACTION_ECHEC
 
     # --- journalisation ------------------------------------------------
 
@@ -268,6 +276,9 @@ def _message_approbation(acteur: str, action: Optional[str]) -> str:
         return f"✅ Approuvé par @{acteur} — workflow relancé par Mirador."
     if action == TypeCorrection.PULL_REQUEST:
         return f"✅ Approuvé par @{acteur} — pull request de correction ouverte par Mirador."
+    if action == _ACTION_ECHEC:
+        return (f"✅ Approuvé par @{acteur} — l'exécution automatique de la proposition "
+                f"a échoué ; le correctif est à appliquer manuellement (voir les logs).")
     return (f"✅ Approuvé par @{acteur} — approbation enregistrée "
             f"(aucune action automatique associée à cette anomalie).")
 

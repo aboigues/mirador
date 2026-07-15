@@ -285,6 +285,24 @@ class TestExecutionSurApprobation:
         assert actions.relances == [] and actions.prs == []
         assert actions.fermetures[0]["label"] == "resolved"
 
+    async def test_approuver_execution_qui_echoue_ferme_proprement(self):
+        # Si l'exécution de la proposition échoue (ex. PR sur branche inexistante),
+        # l'approbation ne doit PAS planter : commentaire honnête + fermeture.
+        actions, writer = _ActionsFake(), _WriterFake()
+
+        async def _boom(*a, **k):
+            raise RuntimeError("422 no such branch")
+        actions.creer_pull_request = _boom
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        details = {"proposition": {"type": TypeCorrection.PULL_REQUEST, "justification": "j",
+                                   "titre_pr": "t", "corps_pr": "c"},
+                   "workflow_run_id": 555, "head_branch": "main"}
+        traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
+        await traitement.traiter(_message_validation(commande="approuver"))
+        assert actions.fermetures[0]["label"] == "resolved"
+        assert "manuel" in actions.commentaires[0]["corps"].lower()
+        assert any(e.type_evenement == TypeEvenement.VALIDATION for e in writer.evenements)
+
 
 class TestValidationHumaine:
     async def test_approuver_commente_et_ferme_resolved(self):
