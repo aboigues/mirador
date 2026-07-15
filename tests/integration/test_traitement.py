@@ -5,9 +5,19 @@ client GitHub Actions et le writer d'audit. Vérifie chaque branche de décision
 pas d'anomalie, intervention auto (RELANCE / PR), escalade humaine, et le retour
 de validation (approuver / rejeter).
 """
+import io
+import zipfile
 from uuid import uuid4
 
 import pytest
+
+
+def _zip_logs(texte: str) -> bytes:
+    """Emballe un texte de log comme le fait l'API GitHub (archive ZIP)."""
+    tampon = io.BytesIO()
+    with zipfile.ZipFile(tampon, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("build/2_Run.txt", texte)
+    return tampon.getvalue()
 
 from src.agents.correcteur import PropositionCorrection, TypeCorrection
 from src.agents.detecteur import Detecteur
@@ -163,6 +173,17 @@ class TestInterventionAuto:
         await traitement.traiter(_message_workflow())
         assert actions.relances == [(DEPOT, 12345678)]
         assert any(e.type_evenement == TypeEvenement.INTERVENTION for e in writer.evenements)
+
+    async def test_low_relance_sur_logs_zippes(self):
+        # Cas réel : GitHub renvoie les logs en archive ZIP. Le matching de la
+        # règle (pattern_log) doit fonctionner après dézippage.
+        regle = _regle_relance()
+        actions = _ActionsFake(logs=_zip_logs("Error: connection timeout after 30s"))
+        writer = _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="flaky"))
+        traitement = _traitement(actions, writer, correcteur, regles=[regle])
+        await traitement.traiter(_message_workflow())
+        assert actions.relances == [(DEPOT, 12345678)]
 
     async def test_low_pull_request(self):
         actions, writer = _ActionsFake(), _WriterFake()

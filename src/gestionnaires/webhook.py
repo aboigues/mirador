@@ -164,6 +164,11 @@ def traiter_webhook_brut(
         return 400, None
 
     if event_type == "workflow_run":
+        # GitHub émet plusieurs events par run (requested / in_progress /
+        # completed). Seul l'event terminé a des logs exploitables : ignorer
+        # les autres pour ne pas faire échouer le traitement en aval.
+        if payload.get("action") != "completed":
+            return 204, None
         return 202, _construire_message_workflow_run(payload, delivery_id)
 
     message = _construire_message_issue_comment(payload, delivery_id, resoudre_responsables)

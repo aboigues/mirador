@@ -125,6 +125,29 @@ class TestWebhookHMAC:
         )
         assert resp.status_code == 204
 
+    @pytest.mark.parametrize("action", ["requested", "in_progress"])
+    def test_workflow_run_non_termine_retourne_204(self, client, action):
+        # GitHub émet plusieurs events workflow_run par run (requested /
+        # in_progress / completed). Les non terminés n'ont pas encore de logs
+        # disponibles : les enqueue ferait crasher le traitement en aval.
+        payload = _payload_valide()
+        payload["action"] = action
+        payload["workflow_run"]["status"] = action
+        payload["workflow_run"]["conclusion"] = None
+        body = json.dumps(payload).encode()
+        signature = _signer(body, WEBHOOK_SECRET)
+        resp = client.post(
+            "/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "workflow_run",
+                "X-Hub-Signature-256": signature,
+                "X-GitHub-Delivery": "550e8400-e29b-41d4-a716-446655440006",
+            },
+        )
+        assert resp.status_code == 204
+
     def test_json_malforme_retourne_400(self, client):
         body = b"{ invalid json }"
         signature = _signer(body, WEBHOOK_SECRET)

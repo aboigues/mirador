@@ -19,6 +19,7 @@ from src.agents.superviseur import DecisionEscalade
 from src.domaine.anomalie import Anomalie
 from src.domaine.journal import EvenementJournal, TypeEvenement
 from src.domaine.regle import RegleDiagnostic
+from src.infrastructure.github.actions_client import extraire_texte_logs
 
 log = structlog.get_logger(__name__)
 
@@ -67,7 +68,7 @@ class Traitement:
         contenu_logs = await self._actions.telecharger_logs(
             depot_nom, message.get("workflow_run_id"), depot.installation_id
         )
-        extrait_log = contenu_logs.decode("utf-8", errors="ignore")
+        extrait_log = extraire_texte_logs(contenu_logs)
 
         anomalie = self._detecteur.detecter(
             message, depot.id, regles,
