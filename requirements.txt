@@ -3,7 +3,11 @@
 # handlers (pas d'uvicorn : Scaleway fournit le serveur HTTP du handler).
 pydantic>=2.13.4
 httpx>=0.28.1
-PyJWT>=2.9.0
+# [crypto] tire `cryptography` : OBLIGATOIRE pour signer le JWT RS256 de l'auth
+# GitHub App. Sans l'extra, PyJWT seul lève NotImplementedError au runtime (la
+# fonction traitement plante avant tout traitement — invisible en local car le
+# venv a déjà cryptography en dépendance de dev).
+PyJWT[crypto]>=2.9.0
 boto3>=1.43.17
 anthropic>=0.105.2
 structlog>=25.5.0
