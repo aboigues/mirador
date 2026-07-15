@@ -116,6 +116,28 @@ class TestDeduplicationDeliveryId:
         assert depot.delivery_deja_traite("nimporte") is False
 
 
+class TestPropositionEscalade:
+    def test_retourne_les_details_de_l_escalade(self, writer, depot):
+        from uuid import uuid4
+        cid = uuid4()
+        writer.ecrire([EvenementJournal(
+            correlation_id=cid, type_evenement=TypeEvenement.ESCALADE,
+            niveau_risque="HIGH", depot="aboigues/k8t", acteur="mirador-agent",
+            statut="EN_ATTENTE", workflow_run_id=555,
+            details={"proposition": {"type": "RELANCE"}, "workflow_run_id": 555},
+        )])
+        details = depot.proposition_escalade(str(cid))
+        assert details["proposition"]["type"] == "RELANCE"
+        assert details["workflow_run_id"] == 555
+
+    def test_absent_retourne_none(self, writer, depot):
+        writer.ecrire([_evenement()])
+        assert depot.proposition_escalade(str(__import__("uuid").uuid4())) is None
+
+    def test_id_invalide_retourne_none(self, depot):
+        assert depot.proposition_escalade("pas-un-uuid") is None
+
+
 class TestChecksum:
     def test_checksum_persiste_correspond_au_fichier(self, bucket, writer):
         writer.ecrire([_evenement()])
