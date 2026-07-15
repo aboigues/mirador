@@ -96,9 +96,20 @@ class _ActionsFake:
         self.issues_ouvertes: list = []
         self.commentaires: list = []
         self.fermetures: list = []
+        self.branches: list = []
+        self.fichiers: list = []
 
     async def telecharger_logs(self, depot, run_id, installation_id) -> bytes:
         return self._logs
+
+    async def obtenir_sha_tete(self, depot, branche, installation_id) -> str:
+        return "base-sha"
+
+    async def creer_branche(self, depot, nom_branche, sha_base, installation_id) -> None:
+        self.branches.append((nom_branche, sha_base))
+
+    async def televerser_fichier(self, depot, chemin, contenu, branche, message, installation_id) -> None:
+        self.fichiers.append({"chemin": chemin, "contenu": contenu, "branche": branche})
 
     async def relancer_workflow(self, depot, run_id, installation_id) -> None:
         self.relances.append((depot, run_id))
@@ -288,7 +299,23 @@ class TestExecutionSurApprobation:
         assert actions.fermetures[0]["label"] == "resolved"
         assert "relanc" in actions.commentaires[0]["corps"].lower()
 
-    async def test_approuver_execute_pull_request(self):
+    async def test_approuver_pr_avec_fichiers_materialise_la_branche(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        details = {"proposition": {"type": TypeCorrection.PULL_REQUEST, "justification": "j",
+                                   "titre_pr": "fix: X", "corps_pr": "corps",
+                                   "fichiers": [{"chemin": "go.mod", "contenu": "module k8t\ngo 1.25.12\n"}]},
+                   "workflow_run_id": 555, "head_branch": "main"}
+        traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
+        await traitement.traiter(_message_validation(commande="approuver"))
+        assert actions.branches == [("mirador/fix-555", "base-sha")]
+        assert actions.fichiers[0]["chemin"] == "go.mod"
+        assert actions.fichiers[0]["branche"] == "mirador/fix-555"
+        assert len(actions.prs) == 1
+        assert actions.prs[0]["branche_source"] == "mirador/fix-555"
+        assert actions.relances == []
+
+    async def test_approuver_pr_sans_fichiers_ecrit_document(self):
         actions, writer = _ActionsFake(), _WriterFake()
         correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
         details = {"proposition": {"type": TypeCorrection.PULL_REQUEST, "justification": "j",
@@ -296,7 +323,10 @@ class TestExecutionSurApprobation:
                    "workflow_run_id": 555, "head_branch": "main"}
         traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
         await traitement.traiter(_message_validation(commande="approuver"))
-        assert len(actions.prs) == 1 and actions.relances == []
+        assert actions.branches == [("mirador/fix-555", "base-sha")]
+        assert actions.fichiers[0]["chemin"] == "MIRADOR-FIX.md"
+        assert "diff" in actions.fichiers[0]["contenu"]
+        assert len(actions.prs) == 1
 
     async def test_approuver_sans_proposition_ferme_sans_action(self):
         actions, writer = _ActionsFake(), _WriterFake()

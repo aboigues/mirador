@@ -35,12 +35,20 @@ class RefusModele(Exception):
     """Levée quand le modèle refuse la requête (stop_reason == refusal)."""
 
 
+class FichierCorrectif(BaseModel):
+    chemin: str
+    contenu: str  # contenu COMPLET du fichier après correction
+
+
 class PropositionCorrection(BaseModel):
     type: str
     justification: str
     titre_pr: Optional[str] = None
     corps_pr: Optional[str] = None
     correctif: Optional[str] = None
+    # Fichiers à écrire sur la branche de correction (contenu complet). Optionnel :
+    # si vide, Mirador ouvre quand même une PR documentant le correctif à appliquer.
+    fichiers: Optional[list[FichierCorrectif]] = None
 
 
 # Schéma de sortie structurée imposé au modèle
@@ -52,6 +60,18 @@ _SCHEMA_PROPOSITION: dict[str, Any] = {
         "titre_pr": {"type": "string"},
         "corps_pr": {"type": "string"},
         "correctif": {"type": "string"},
+        "fichiers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "chemin": {"type": "string"},
+                    "contenu": {"type": "string"},
+                },
+                "required": ["chemin", "contenu"],
+                "additionalProperties": False,
+            },
+        },
     },
     "required": ["type", "justification"],
     "additionalProperties": False,
@@ -62,8 +82,12 @@ _SYSTEME = (
     "d'un workflow GitHub Actions en échec, tu identifies la cause et proposes UNE "
     "intervention : RELANCE (si l'échec est transitoire — flaky test, timeout réseau) "
     "ou PULL_REQUEST (si un correctif de code est nécessaire). Tu ne proposes jamais "
-    "de commit direct. Pour une PULL_REQUEST, fournis un titre, un corps et le correctif. "
-    "Réponds en français."
+    "de commit direct. Pour une PULL_REQUEST, fournis un titre, un corps, et — quand "
+    "c'est possible et sûr — la liste `fichiers` des fichiers modifiés avec leur "
+    "contenu COMPLET après correction (chemin + contenu), pour que la PR soit ouverte "
+    "automatiquement. N'inclus dans `fichiers` que des fichiers que tu peux produire "
+    "intégralement et correctement ; sinon laisse `fichiers` vide et décris le "
+    "correctif dans le corps. Réponds en français."
 )
 
 

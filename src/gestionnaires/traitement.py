@@ -215,22 +215,56 @@ class Traitement:
         run_id = details.get("workflow_run_id")
         try:
             if proposition.get("type") == TypeCorrection.PULL_REQUEST:
-                await self._actions.creer_pull_request(
-                    depot_nom, depot.installation_id,
-                    titre=proposition.get("titre_pr") or "fix: correctif Mirador",
-                    corps=proposition.get("corps_pr") or proposition.get("justification") or "",
-                    branche_source=f"mirador/fix-{run_id}",
-                    branche_cible=details.get("head_branch", "main"),
+                await self._ouvrir_pull_request_correctif(
+                    proposition, depot, depot_nom, run_id,
+                    details.get("head_branch", "main"),
                 )
                 return TypeCorrection.PULL_REQUEST
             await self._actions.relancer_workflow(depot_nom, run_id, depot.installation_id)
             return TypeCorrection.RELANCE
         except Exception as exc:
-            # L'approbation reste valable même si l'exécution auto échoue (ex. PR
-            # sur une branche non matérialisée) : on ne fait pas planter le flux.
+            # L'approbation reste valable même si l'exécution auto échoue : on ne
+            # fait pas planter le flux (le correctif reste applicable à la main).
             log.warning("validation.execution_echouee",
                         type=proposition.get("type"), err=str(exc))
             return _ACTION_ECHEC
+
+    async def _ouvrir_pull_request_correctif(
+        self, proposition: dict[str, Any], depot: Any, depot_nom: str,
+        run_id: Any, branche_cible: str,
+    ) -> None:
+        """Matérialise le correctif : crée une branche, écrit les fichiers, ouvre la PR.
+
+        Si la proposition ne fournit pas de fichiers exploitables, on écrit à la
+        place un MIRADOR-FIX.md documentant le correctif — la PR reste réelle et
+        actionnable par un humain.
+        """
+        inst = depot.installation_id
+        branche = f"mirador/fix-{run_id}"
+        titre = proposition.get("titre_pr") or "fix: correctif Mirador"
+
+        sha_base = await self._actions.obtenir_sha_tete(depot_nom, branche_cible, inst)
+        await self._actions.creer_branche(depot_nom, branche, sha_base, inst)
+
+        fichiers = proposition.get("fichiers") or []
+        if fichiers:
+            for fichier in fichiers:
+                await self._actions.televerser_fichier(
+                    depot_nom, fichier["chemin"], fichier["contenu"], branche, titre, inst
+                )
+        else:
+            await self._actions.televerser_fichier(
+                depot_nom, "MIRADOR-FIX.md",
+                _document_correctif(proposition), branche, titre, inst,
+            )
+
+        await self._actions.creer_pull_request(
+            depot_nom, inst,
+            titre=titre,
+            corps=proposition.get("corps_pr") or proposition.get("justification") or "",
+            branche_source=branche,
+            branche_cible=branche_cible,
+        )
 
     # --- journalisation ------------------------------------------------
 
@@ -269,6 +303,21 @@ class Traitement:
             resultat=resultat,
             delivery_id=self._delivery_courant,
         )])
+
+
+def _document_correctif(proposition: dict[str, Any]) -> str:
+    """Contenu du fichier de repli quand la proposition n'a pas de fichiers exploitables."""
+    parties = [
+        "# Correctif proposé par Mirador",
+        "",
+        proposition.get("corps_pr") or proposition.get("justification") or "",
+    ]
+    correctif = proposition.get("correctif")
+    if correctif:
+        parties += ["", "## Détail du correctif", "", "```", correctif, "```"]
+    parties += ["", "> Correctif à compléter/appliquer par un responsable "
+                "(Mirador n'a pas pu le matérialiser automatiquement)."]
+    return "\n".join(parties) + "\n"
 
 
 def _message_approbation(acteur: str, action: Optional[str]) -> str:

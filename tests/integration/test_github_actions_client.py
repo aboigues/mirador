@@ -140,3 +140,53 @@ class TestPullRequest:
         envoye = json.loads(route.calls.last.request.content)
         assert envoye["head"] == "mirador/fix-timeout"
         assert envoye["base"] == "main"
+
+
+class TestMaterialisationCorrectif:
+    @respx.mock
+    async def test_obtenir_sha_tete(self, client):
+        respx.get(_url("/git/ref/heads/main")).mock(
+            return_value=httpx.Response(200, json={"object": {"sha": "abc123"}})
+        )
+        assert await client.obtenir_sha_tete(DEPOT, "main", INSTALLATION_ID) == "abc123"
+
+    @respx.mock
+    async def test_creer_branche(self, client):
+        route = respx.post(_url("/git/refs")).mock(
+            return_value=httpx.Response(201, json={"ref": "refs/heads/mirador/fix-1"})
+        )
+        await client.creer_branche(DEPOT, "mirador/fix-1", "abc123", INSTALLATION_ID)
+        import json
+        envoye = json.loads(route.calls.last.request.content)
+        assert envoye["ref"] == "refs/heads/mirador/fix-1"
+        assert envoye["sha"] == "abc123"
+
+    @respx.mock
+    async def test_televerser_fichier_nouveau(self, client):
+        # GET du sha existant → 404 (fichier absent) ; PUT sans sha (création).
+        respx.get(_url("/contents/go.mod")).mock(return_value=httpx.Response(404))
+        route = respx.put(_url("/contents/go.mod")).mock(
+            return_value=httpx.Response(201, json={"content": {"path": "go.mod"}})
+        )
+        await client.televerser_fichier(
+            DEPOT, "go.mod", "module k8t\n", "mirador/fix-1", "fix", INSTALLATION_ID
+        )
+        import base64, json
+        envoye = json.loads(route.calls.last.request.content)
+        assert base64.b64decode(envoye["content"]).decode() == "module k8t\n"
+        assert envoye["branch"] == "mirador/fix-1"
+        assert "sha" not in envoye
+
+    @respx.mock
+    async def test_televerser_fichier_existant_passe_le_sha(self, client):
+        respx.get(_url("/contents/go.mod")).mock(
+            return_value=httpx.Response(200, json={"sha": "old-sha"})
+        )
+        route = respx.put(_url("/contents/go.mod")).mock(
+            return_value=httpx.Response(200, json={})
+        )
+        await client.televerser_fichier(
+            DEPOT, "go.mod", "nouveau", "mirador/fix-1", "fix", INSTALLATION_ID
+        )
+        import json
+        assert json.loads(route.calls.last.request.content)["sha"] == "old-sha"
