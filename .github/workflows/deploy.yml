@@ -49,11 +49,14 @@ jobs:
       - name: Déployer le code (webhook + traitement)
         run: |
           set -euo pipefail
-          NS_ID=$(scw function namespace list -o json \
+          # project-id explicite : la clé IAM est scopée projet (pas d'org par
+          # défaut), donc `namespace list` sans project-id échoue sur
+          # « organization ID is required ».
+          NS_ID=$(scw function namespace list project-id="$SCW_DEFAULT_PROJECT_ID" region="$SCW_DEFAULT_REGION" -o json \
             | python3 -c "import sys,json;print(next(n['id'] for n in json.load(sys.stdin) if n['name']=='mirador'))")
           echo "namespace mirador = $NS_ID"
           for fn in webhook traitement; do
-            FN_ID=$(scw function function list namespace-id="$NS_ID" -o json \
+            FN_ID=$(scw function function list namespace-id="$NS_ID" region="$SCW_DEFAULT_REGION" -o json \
               | python3 -c "import sys,json;print(next(f['id'] for f in json.load(sys.stdin) if f['name']=='$fn'))")
             echo "→ déploiement de $fn ($FN_ID)"
             bash infra/scaleway/update_code.sh "$FN_ID"
