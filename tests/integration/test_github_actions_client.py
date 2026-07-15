@@ -142,6 +142,23 @@ class TestPullRequest:
         assert envoye["base"] == "main"
 
 
+class TestDeclencherWorkflow:
+    @respx.mock
+    async def test_declencher_workflow_envoie_ref_et_inputs(self, client):
+        route = respx.post(_url("/actions/workflows/mirador-autofix.yml/dispatches")).mock(
+            return_value=httpx.Response(204)
+        )
+        await client.declencher_workflow(
+            DEPOT, "mirador-autofix.yml", "main",
+            {"head_branch": "mirador/fix-1", "modules": "golang.org/x/net@v0.55.0"},
+            INSTALLATION_ID,
+        )
+        import json
+        envoye = json.loads(route.calls.last.request.content)
+        assert envoye["ref"] == "main"
+        assert envoye["inputs"]["head_branch"] == "mirador/fix-1"
+
+
 class TestMaterialisationCorrectif:
     @respx.mock
     async def test_obtenir_sha_tete(self, client):

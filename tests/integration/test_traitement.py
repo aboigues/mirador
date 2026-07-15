@@ -98,9 +98,13 @@ class _ActionsFake:
         self.fermetures: list = []
         self.branches: list = []
         self.fichiers: list = []
+        self.workflows: list = []
 
     async def telecharger_logs(self, depot, run_id, installation_id) -> bytes:
         return self._logs
+
+    async def declencher_workflow(self, depot, fichier_workflow, ref, inputs, installation_id) -> None:
+        self.workflows.append({"fichier": fichier_workflow, "ref": ref, "inputs": inputs})
 
     async def obtenir_sha_tete(self, depot, branche, installation_id) -> str:
         return "base-sha"
@@ -314,6 +318,30 @@ class TestExecutionSurApprobation:
         assert len(actions.prs) == 1
         assert actions.prs[0]["branche_source"] == "mirador/fix-555"
         assert actions.relances == []
+
+    async def test_approuver_pr_deps_declenche_le_build_reel(self):
+        # Correctif de deps → délègue au workflow de build (go mod tidy), pas de
+        # branche/fichier direct ; la PR sera ouverte par le workflow.
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        details = {"proposition": {"type": TypeCorrection.PULL_REQUEST, "justification": "vulns",
+                                   "titre_pr": "fix: bump", "corps_pr": "corps",
+                                   "mise_a_jour": {"go_version": "1.25.12",
+                                                   "modules": ["golang.org/x/net@v0.55.0"]}},
+                   "workflow_run_id": 555, "head_branch": "main"}
+        traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
+        await traitement.traiter(_message_validation(commande="approuver"))
+        assert len(actions.workflows) == 1
+        w = actions.workflows[0]
+        assert w["fichier"] == "mirador-autofix.yml"
+        assert w["ref"] == "main"
+        assert w["inputs"]["head_branch"] == "mirador/fix-555"
+        assert w["inputs"]["go_version"] == "1.25.12"
+        assert w["inputs"]["modules"] == "golang.org/x/net@v0.55.0"
+        # pas de création directe de branche/fichier/PR sur ce chemin
+        assert actions.branches == [] and actions.prs == []
+        assert "construction" in actions.commentaires[0]["corps"].lower()
+        assert actions.fermetures[0]["label"] == "resolved"
 
     async def test_approuver_pr_sans_fichiers_ecrit_document(self):
         actions, writer = _ActionsFake(), _WriterFake()

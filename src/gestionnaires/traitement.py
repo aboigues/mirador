@@ -25,6 +25,8 @@ log = structlog.get_logger(__name__)
 
 _ACTEUR_AGENT = "mirador-agent"
 _ACTION_ECHEC = "ÉCHEC_EXÉCUTION"
+_ACTION_PR_CONSTRUCTION = "PR_EN_CONSTRUCTION"
+_WORKFLOW_AUTOFIX = "mirador-autofix.yml"
 
 
 class Traitement:
@@ -215,11 +217,10 @@ class Traitement:
         run_id = details.get("workflow_run_id")
         try:
             if proposition.get("type") == TypeCorrection.PULL_REQUEST:
-                await self._ouvrir_pull_request_correctif(
+                return await self._ouvrir_pull_request_correctif(
                     proposition, depot, depot_nom, run_id,
                     details.get("head_branch", "main"),
                 )
-                return TypeCorrection.PULL_REQUEST
             await self._actions.relancer_workflow(depot_nom, run_id, depot.installation_id)
             return TypeCorrection.RELANCE
         except Exception as exc:
@@ -232,16 +233,34 @@ class Traitement:
     async def _ouvrir_pull_request_correctif(
         self, proposition: dict[str, Any], depot: Any, depot_nom: str,
         run_id: Any, branche_cible: str,
-    ) -> None:
-        """Matérialise le correctif : crée une branche, écrit les fichiers, ouvre la PR.
+    ) -> str:
+        """Matérialise le correctif et retourne le type d'action réalisé.
 
-        Si la proposition ne fournit pas de fichiers exploitables, on écrit à la
-        place un MIRADOR-FIX.md documentant le correctif — la PR reste réelle et
-        actionnable par un humain.
+        Trois voies, par ordre de préférence :
+        1. `mise_a_jour` (deps Go) → délègue à un workflow de build réel qui
+           régénère go.mod/go.sum et ouvre la PR (→ correctif qui passe la CI).
+        2. `fichiers` fournis → crée la branche, écrit les fichiers, ouvre la PR.
+        3. sinon → PR documentaire (MIRADOR-FIX.md) à compléter par un humain.
         """
         inst = depot.installation_id
         branche = f"mirador/fix-{run_id}"
         titre = proposition.get("titre_pr") or "fix: correctif Mirador"
+
+        maj = proposition.get("mise_a_jour") or {}
+        if maj.get("go_version") or maj.get("modules"):
+            await self._actions.declencher_workflow(
+                depot_nom, _WORKFLOW_AUTOFIX, branche_cible,
+                {
+                    "base_branch": branche_cible,
+                    "head_branch": branche,
+                    "go_version": maj.get("go_version") or "",
+                    "modules": " ".join(maj.get("modules") or []),
+                    "titre": titre,
+                    "corps": proposition.get("corps_pr") or proposition.get("justification") or "",
+                },
+                inst,
+            )
+            return _ACTION_PR_CONSTRUCTION
 
         sha_base = await self._actions.obtenir_sha_tete(depot_nom, branche_cible, inst)
         await self._actions.creer_branche(depot_nom, branche, sha_base, inst)
@@ -265,6 +284,7 @@ class Traitement:
             branche_source=branche,
             branche_cible=branche_cible,
         )
+        return TypeCorrection.PULL_REQUEST
 
     # --- journalisation ------------------------------------------------
 
@@ -325,6 +345,9 @@ def _message_approbation(acteur: str, action: Optional[str]) -> str:
         return f"✅ Approuvé par @{acteur} — workflow relancé par Mirador."
     if action == TypeCorrection.PULL_REQUEST:
         return f"✅ Approuvé par @{acteur} — pull request de correction ouverte par Mirador."
+    if action == _ACTION_PR_CONSTRUCTION:
+        return (f"✅ Approuvé par @{acteur} — correctif en cours de construction "
+                f"(build lancé) ; la pull request sera ouverte automatiquement.")
     if action == _ACTION_ECHEC:
         return (f"✅ Approuvé par @{acteur} — l'exécution automatique de la proposition "
                 f"a échoué ; le correctif est à appliquer manuellement (voir les logs).")
