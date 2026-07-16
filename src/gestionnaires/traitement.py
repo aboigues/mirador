@@ -102,14 +102,37 @@ class Traitement:
         else:  # NOTIFIER_ET_ATTENDRE ou VALIDATION_HUMAINE_REQUISE
             await self._escalader(anomalie, depot, depot_nom, extrait_log, regles)
 
+    async def _proposer(
+        self, anomalie: Anomalie, extrait_log: str, regles: list[RegleDiagnostic]
+    ) -> Any:
+        """Propose une correction, ou None si le correcteur est indisponible.
+
+        La détection ne doit pas dépendre de la disponibilité de Claude : une
+        panne du correcteur (crédits épuisés, 400, API down) ne doit jamais
+        empêcher Mirador de remonter une anomalie qu'il a bien détectée.
+        """
+        regle = next(
+            (r for r in regles if r.id == anomalie.regle_declenchee_id), None
+        )
+        try:
+            return await self._correcteur.proposer(anomalie, extrait_log, regle)
+        except Exception as exc:
+            log.warning("correcteur.indisponible",
+                        anomalie_id=str(anomalie.id), err=str(exc))
+            return None
+
     async def _intervenir(
         self, anomalie: Anomalie, depot: Any, depot_nom: str,
         extrait_log: str, regles: list[RegleDiagnostic],
     ) -> None:
-        regle = next(
-            (r for r in regles if r.id == anomalie.regle_declenchee_id), None
-        )
-        proposition = await self._correcteur.proposer(anomalie, extrait_log, regle)
+        proposition = await self._proposer(anomalie, extrait_log, regles)
+        if proposition is None:
+            # Rien à exécuter, mais l'anomalie est tracée plutôt que perdue en DLQ.
+            self._journaliser(
+                TypeEvenement.INTERVENTION, anomalie, depot_nom, _ACTION_ECHEC,
+                type_action=None,
+            )
+            return
         anomalie.demarrer_traitement()
 
         if proposition.type == TypeCorrection.PULL_REQUEST:
@@ -138,10 +161,8 @@ class Traitement:
     ) -> None:
         # Calcule la proposition d'intervention et la PERSISTE dans l'événement
         # d'escalade : elle sera exécutée telle quelle si un responsable /approuver.
-        regle = next(
-            (r for r in regles if r.id == anomalie.regle_declenchee_id), None
-        )
-        proposition = await self._correcteur.proposer(anomalie, extrait_log, regle)
+        # None si le correcteur est en panne — l'issue s'ouvre quand même.
+        proposition = await self._proposer(anomalie, extrait_log, regles)
 
         corps = _corps_issue(anomalie, depot_nom, proposition)
         await self._actions.ouvrir_issue(
@@ -156,7 +177,7 @@ class Traitement:
         self._journaliser(
             TypeEvenement.ESCALADE, anomalie, depot_nom, "EN_ATTENTE",
             details={
-                "proposition": proposition.model_dump(),
+                "proposition": proposition.model_dump() if proposition else None,
                 "workflow_run_id": anomalie.workflow_run_id,
                 "head_branch": anomalie_branche(anomalie),
             },
@@ -365,9 +386,15 @@ def _section_proposition(proposition: Any) -> str:
 
     L'humain voit ainsi ce que Mirador exécuterait sur /approuver — utile aussi
     quand l'exécution auto échoue (le correctif reste actionnable manuellement).
+
+    `None` = l'analyse n'a pas pu aboutir (correcteur indisponible). On le dit
+    explicitement : un silence se confondrait avec « rien à proposer ».
     """
     if proposition is None:
-        return ""
+        return ("## Analyse indisponible\n\n"
+                "⚠️ Mirador n'a pas pu analyser cet échec (correcteur "
+                "indisponible) : aucune correction n'est proposée. L'anomalie "
+                "ci-dessus a bien été détectée et reste à traiter manuellement.\n\n")
     if proposition.type == TypeCorrection.PULL_REQUEST:
         detail = ""
         if proposition.corps_pr:

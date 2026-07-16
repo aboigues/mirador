@@ -88,6 +88,16 @@ class _CorrecteurFake:
         return self._proposition
 
 
+class _CorrecteurEnPanne:
+    """Correcteur indisponible (crédits épuisés, panne API, 400…)."""
+
+    def __init__(self, erreur: Exception | None = None):
+        self._erreur = erreur or RuntimeError("credit balance is too low")
+
+    async def proposer(self, anomalie, extrait_log, regle=None):
+        raise self._erreur
+
+
 class _ActionsFake:
     def __init__(self, logs: bytes = b"aucun pattern"):
         self._logs = logs
@@ -280,6 +290,53 @@ class TestEscaladeHumaine:
         corps = actions.issues_ouvertes[0]["corps"]
         assert "fix: bump deps" in corps
         assert "Mettre à jour X et Y" in corps
+
+
+class TestEscaladeResilienteAuCorrecteur:
+    """La détection ne doit pas dépendre de la disponibilité de Claude.
+
+    Si le correcteur tombe (crédits épuisés, panne API), l'anomalie a malgré tout
+    été détectée : l'issue doit être ouverte quand même, sinon Mirador devient
+    aveugle exactement au moment où il sert.
+    """
+
+    async def test_correcteur_en_panne_ouvre_quand_meme_l_issue(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        traitement = _traitement(actions, writer, _CorrecteurEnPanne())
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
+        issue = actions.issues_ouvertes[0]
+        assert "mirador:anomalie_id:" in issue["corps"]  # /approuver reste possible
+        assert any(e.type_evenement == TypeEvenement.ESCALADE for e in writer.evenements)
+
+    async def test_issue_signale_l_absence_de_proposition(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        traitement = _traitement(actions, writer, _CorrecteurEnPanne())
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        corps = actions.issues_ouvertes[0]["corps"]
+        # L'humain doit savoir qu'il n'y a pas de proposition ET pourquoi — un
+        # silence se confondrait avec « rien à proposer ».
+        assert "Correction proposée" not in corps
+        assert "analyse" in corps.lower()
+
+    async def test_escalade_persiste_une_proposition_nulle(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        traitement = _traitement(actions, writer, _CorrecteurEnPanne())
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        esc = next(e for e in writer.evenements if e.type_evenement == TypeEvenement.ESCALADE)
+        # /approuver relit ce champ : None → approbation enregistrée sans action,
+        # chemin déjà géré par _executer_proposition_approuvee.
+        assert esc.details["proposition"] is None
+        assert esc.details["workflow_run_id"] == 12345678
+
+    async def test_panne_correcteur_n_empeche_pas_l_intervention_auto_low(self):
+        # Sur un LOW, l'intervention auto passe par le correcteur : s'il tombe,
+        # on ne peut rien exécuter, mais le message ne doit pas partir en DLQ.
+        actions, writer = _ActionsFake(b"connection timeout"), _WriterFake()
+        traitement = _traitement(actions, writer, _CorrecteurEnPanne(),
+                                 regles=[_regle_relance()])
+        await traitement.traiter(_message_workflow(conclusion="failure"))
+        assert actions.relances == []  # rien exécuté, mais pas de crash
 
 
 class TestExecutionSurApprobation:
