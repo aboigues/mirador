@@ -16,8 +16,14 @@ build/
 *.key
 mirador-depots.json
 .env*
-**/.secrets.env
+# Le glob final couvre les dérivées (.bak, .old, .save, .1…) : sans lui, une
+# simple copie de sauvegarde échappe à l'ignore et devient committable.
+**/.secrets.env*
 !.env.example
+
+# Copies de sauvegarde d'éditeurs/scripts — peuvent dupliquer un fichier de secrets
+*.bak
+*.orig
 
 # Fichiers swap d'éditeur (jamais dans le dépôt — peuvent contenir des secrets)
 *.swp
