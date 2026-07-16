@@ -6,8 +6,10 @@ Deux chemins :
 - Cause inconnue ou correctif de code → analyse du log par Claude, qui propose
   une RELANCE ou une PULL_REQUEST (jamais de commit direct — Principe III).
 
-Le modèle par défaut est Claude Opus 4.8 (claude-opus-4-8), avec thinking adaptatif
-et sortie structurée (json_schema) pour une proposition exploitable.
+Le modèle par défaut est Claude Haiku 4.5 : la tâche est une classification
+contrainte par une sortie structurée (json_schema), pour laquelle Haiku suffit à
+un cinquième du coût d'Opus. Remonter à claude-sonnet-5 si la qualité des
+correctifs déçoit à l'usage.
 """
 from __future__ import annotations
 
@@ -22,8 +24,12 @@ from src.domaine.regle import ActionRecommandee, RegleDiagnostic
 
 log = structlog.get_logger(__name__)
 
-_MODELE_DEFAUT = "claude-opus-4-8"
-_MAX_TOKENS = 16000
+_MODELE_DEFAUT = "claude-haiku-4-5"
+_MAX_TOKENS = 4000
+# Les logs GitHub dézippés font des centaines de Ko ; envoyer le tout à chaque
+# appel Claude coûte très cher en tokens d'entrée. On ne garde que la fin du log
+# (les erreurs de CI y sont quasi toujours), plafonnée.
+_MAX_LOG_CHARS = 8000
 
 
 class TypeCorrection:
@@ -137,16 +143,20 @@ class Correcteur:
     async def _analyser_via_claude(
         self, anomalie: Anomalie, extrait_log: str
     ) -> PropositionCorrection:
+        log_tronque = extrait_log[-_MAX_LOG_CHARS:] if extrait_log else ""
+        if extrait_log and len(extrait_log) > _MAX_LOG_CHARS:
+            log_tronque = "[…début du log tronqué…]\n" + log_tronque
         invite = (
             f"Workflow « {anomalie.workflow_nom} » (run {anomalie.workflow_run_id}) "
-            f"de type {anomalie.type}.\n\nExtrait de log :\n{extrait_log}"
+            f"de type {anomalie.type}.\n\nExtrait de log :\n{log_tronque}"
         )
+        # Ni `thinking` ni `output_config.effort` : coûteux en tokens, non nécessaires
+        # pour cette classification, et surtout incompatibles avec Haiku 4.5 (erreur).
+        # La sortie structurée (json_schema) suffit et marche sur tous les modèles.
         reponse = await self._client.messages.create(
             model=self._modele,
             max_tokens=_MAX_TOKENS,
-            thinking={"type": "adaptive"},
             output_config={
-                "effort": "high",
                 "format": {"type": "json_schema", "schema": _SCHEMA_PROPOSITION},
             },
             system=_SYSTEME,

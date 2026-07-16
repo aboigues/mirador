@@ -14,7 +14,7 @@ from src.agents.correcteur import Correcteur, RefusModele, TypeCorrection
 from src.domaine.anomalie import Anomalie, NiveauRisque, TypeAnomalie
 from src.domaine.regle import ActionRecommandee, OrigineRegle, RegleDiagnostic
 
-MODELE = "claude-opus-4-8"
+MODELE = "claude-haiku-4-5"
 
 
 def _anomalie() -> Anomalie:
@@ -114,11 +114,31 @@ class TestAnalyseViaClaude:
         await correcteur.proposer(_anomalie(), extrait_log="trace de log", regle=None)
         appel = client.messages.appels[0]
         assert appel["model"] == MODELE
-        assert appel["thinking"] == {"type": "adaptive"}
-        assert appel["output_config"]["effort"] == "high"
+        # Économie de coût : pas de thinking ni d'effort (aussi incompatibles Haiku),
+        # sortie structurée seule, max_tokens borné.
+        assert "thinking" not in appel
+        assert "effort" not in appel["output_config"]
         assert appel["output_config"]["format"]["type"] == "json_schema"
+        assert appel["max_tokens"] <= 4000
         # Le log doit être transmis au modèle
         assert "trace de log" in json.dumps(appel["messages"], ensure_ascii=False)
+
+    async def test_modele_par_defaut_est_haiku(self):
+        # La prod n'injecte pas de modèle (entree.py) : le défaut est ce qui est
+        # réellement facturé. Un changement de modèle doit être délibéré.
+        client = _ClientFake(_reponse_json(type="RELANCE", justification="x"))
+        await Correcteur(client).proposer(_anomalie(), extrait_log="x", regle=None)
+        assert client.messages.appels[0]["model"] == "claude-haiku-4-5"
+
+    async def test_log_volumineux_est_tronque(self):
+        # Un log de plusieurs centaines de Ko ne doit pas être envoyé en entier.
+        client = _ClientFake(_reponse_json(type="RELANCE", justification="x"))
+        correcteur = Correcteur(client, modele=MODELE)
+        gros_log = "L" * 200_000 + "\nERREUR FINALE: govulncheck exit 3"
+        await correcteur.proposer(_anomalie(), extrait_log=gros_log, regle=None)
+        envoye = json.dumps(client.messages.appels[0]["messages"], ensure_ascii=False)
+        assert len(envoye) < 20_000  # tronqué, pas les 200 Ko
+        assert "ERREUR FINALE" in envoye  # la fin (les erreurs) est conservée
 
 
 class TestRefus:
