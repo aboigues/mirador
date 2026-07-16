@@ -1,0 +1,165 @@
+name: Configuration Scaleway (env + secrets)
+
+# Pose la configuration des fonctions (variables d'environnement ET secrets) à
+# partir des Variables/Secrets GitHub Actions, qui sont la SOURCE DE VÉRITÉ.
+# Aucun déploiement ne se fait depuis un poste : ce workflow est le seul chemin.
+#
+# Complémentaire de deploy.yml, qui ne met à jour que le CODE. Ici on ne touche
+# pas au code — utile pour ajouter un dépôt surveillé (MIRADOR_DEPOTS), faire
+# tourner une clé, ou corriger un endpoint.
+#
+# À déclencher à la main (Actions → ce workflow → Run workflow) après avoir
+# modifié une Variable ou un Secret du dépôt : GitHub ne notifie aucun
+# changement de Variable, donc il n'y a rien à quoi s'abonner automatiquement.
+#
+# ⚠️ `scw function function update environment-variables.X=…` REMPLACE toute la
+# map. Les 7 variables sont donc TOUJOURS reposées ensemble — ne jamais n'en
+# passer qu'une. Idem pour les secrets, qui vivent dans une map séparée.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fonctions:
+        description: "Fonctions à configurer"
+        type: choice
+        options: ["webhook + traitement", "webhook", "traitement"]
+        default: "webhook + traitement"
+
+concurrency:
+  group: deploy-scaleway # partagé avec deploy.yml : jamais deux écritures en même temps
+  cancel-in-progress: false
+
+env:
+  SCW_VERSION: "2.56.3"
+  SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+  SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+  SCW_DEFAULT_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+  SCW_DEFAULT_ORGANIZATION_ID: 0a3e5b10-4caa-4048-a607-f53080c01569
+  SCW_DEFAULT_REGION: fr-par
+  SCW_PROFILE: ""
+
+jobs:
+  configurer:
+    name: Pose de l'environnement des fonctions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer la CLI scw
+        run: |
+          curl -fsSL -o /usr/local/bin/scw \
+            "https://github.com/scaleway/scaleway-cli/releases/download/v${SCW_VERSION}/scaleway-cli_${SCW_VERSION}_linux_amd64"
+          chmod +x /usr/local/bin/scw
+          scw version
+
+      - name: Vérifier MIRADOR_DEPOTS avant de toucher la prod
+        # Échouer ici plutôt que de déployer une config que le runtime rejettera :
+        # une variable malformée rendrait les deux fonctions aveugles.
+        env:
+          MIRADOR_DEPOTS: ${{ vars.MIRADOR_DEPOTS }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys
+          brut = os.environ.get("MIRADOR_DEPOTS", "")
+          if not brut.strip():
+              sys.exit("MIRADOR_DEPOTS est vide — définis la Variable GitHub.")
+          try:
+              depots = json.loads(brut)
+          except json.JSONDecodeError as err:
+              sys.exit(f"MIRADOR_DEPOTS : JSON invalide ({err})")
+          if not isinstance(depots, list) or not depots:
+              sys.exit("MIRADOR_DEPOTS doit être une liste non vide.")
+          for d in depots:
+              for champ in ("identifiant_github", "installation_id", "responsables"):
+                  if not d.get(champ):
+                      sys.exit(f"MIRADOR_DEPOTS : champ '{champ}' manquant dans {d}")
+              if "/" not in d["identifiant_github"]:
+                  sys.exit(f"MIRADOR_DEPOTS : identifiant invalide {d['identifiant_github']!r}")
+          print(f"✓ {len(depots)} dépôt(s) surveillé(s) :")
+          for d in depots:
+              print(f"   - {d['identifiant_github']} (seuil {d.get('seuil_timeout_secondes', 3600)}s)")
+          PY
+
+      - name: Poser env + secrets
+        env:
+          # --- Variables (non secrètes) ---
+          BUCKET_NAME: ${{ vars.BUCKET_NAME }}
+          S3_ENDPOINT_URL: ${{ vars.S3_ENDPOINT_URL }}
+          SQS_ENDPOINT_URL: ${{ vars.SQS_ENDPOINT_URL }}
+          SQS_QUEUE_URL: ${{ vars.SQS_QUEUE_URL }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          MIRADOR_DEPOTS: ${{ vars.MIRADOR_DEPOTS }}
+          # Le préfixe GITHUB_ est réservé par GitHub Actions : les Variables et
+          # Secrets s'appellent APP_ID / APP_PRIVATE_KEY, mais le runtime attend
+          # GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY côté Scaleway.
+          GITHUB_APP_ID: ${{ vars.APP_ID }}
+          # --- Secrets (chiffrés côté Scaleway) ---
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          MNQ_ACCESS_KEY: ${{ secrets.MNQ_ACCESS_KEY }}
+          MNQ_SECRET_KEY: ${{ secrets.MNQ_SECRET_KEY }}
+          CHOIX: ${{ inputs.fonctions }}
+        run: |
+          set -euo pipefail
+
+          case "$CHOIX" in
+            webhook) FONCTIONS=(webhook) ;;
+            traitement) FONCTIONS=(traitement) ;;
+            *) FONCTIONS=(webhook traitement) ;;
+          esac
+
+          # Map non secrète : reposée en entier (un update partiel l'écraserait).
+          ENV_ARGS=(
+            "environment-variables.BUCKET_NAME=${BUCKET_NAME:?Variable BUCKET_NAME requise}"
+            "environment-variables.S3_ENDPOINT_URL=${S3_ENDPOINT_URL:?Variable S3_ENDPOINT_URL requise}"
+            "environment-variables.SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:?Variable SQS_ENDPOINT_URL requise}"
+            "environment-variables.SQS_QUEUE_URL=${SQS_QUEUE_URL:?Variable SQS_QUEUE_URL requise}"
+            "environment-variables.AWS_REGION=${AWS_REGION:?Variable AWS_REGION requise}"
+            "environment-variables.GITHUB_APP_ID=${GITHUB_APP_ID:?Variable APP_ID requise}"
+            "environment-variables.MIRADOR_DEPOTS=${MIRADOR_DEPOTS:?Variable MIRADOR_DEPOTS requise}"
+          )
+
+          # Map des secrets : séparée de la précédente, reposée en entier aussi.
+          _SECRETS=(WEBHOOK_SECRET ANTHROPIC_API_KEY GITHUB_APP_PRIVATE_KEY
+                    AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY)
+          SECRET_ARGS=(); i=0
+          for nom in "${_SECRETS[@]}"; do
+            SECRET_ARGS+=("secret-environment-variables.$i.key=$nom"
+                          "secret-environment-variables.$i.value=${!nom:?Secret $nom requis}")
+            i=$((i+1))
+          done
+
+          NS_ID=$(scw function namespace list project-id="$SCW_DEFAULT_PROJECT_ID" region="$SCW_DEFAULT_REGION" -o json \
+            | python3 -c "import sys,json;print(next(n['id'] for n in json.load(sys.stdin) if n['name']=='mirador'))")
+          echo "namespace mirador = $NS_ID"
+
+          for fn in "${FONCTIONS[@]}"; do
+            FN_ID=$(scw function function list namespace-id="$NS_ID" region="$SCW_DEFAULT_REGION" -o json \
+              | python3 -c "import sys,json;print(next(f['id'] for f in json.load(sys.stdin) if f['name']=='$fn'))")
+            echo "→ configuration de $fn ($FN_ID)"
+            # Sortie jetée : la réponse contient la map d'env en clair.
+            scw function function update function-id="$FN_ID" region="$SCW_DEFAULT_REGION" \
+              "${ENV_ARGS[@]}" "${SECRET_ARGS[@]}" >/dev/null
+            scw function function deploy function-id="$FN_ID" region="$SCW_DEFAULT_REGION" >/dev/null
+            echo "   ✓ $fn configurée et redéployée"
+          done
+
+      - name: Vérifier les clés posées (sans les valeurs)
+        run: |
+          set -euo pipefail
+          NS_ID=$(scw function namespace list project-id="$SCW_DEFAULT_PROJECT_ID" region="$SCW_DEFAULT_REGION" -o json \
+            | python3 -c "import sys,json;print(next(n['id'] for n in json.load(sys.stdin) if n['name']=='mirador'))")
+          scw function function list namespace-id="$NS_ID" region="$SCW_DEFAULT_REGION" -o json \
+            | python3 -c "
+          import sys, json
+          for f in json.load(sys.stdin):
+              env = sorted((f.get('environment_variables') or {}).keys())
+              sec = sorted(s.get('key') for s in (f.get('secret_environment_variables') or []))
+              print(f\"{f['name']}: status={f['status']}\")
+              print(f\"   env    : {env}\")
+              print(f\"   secrets: {sec}\")
+          "
