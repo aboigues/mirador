@@ -82,9 +82,11 @@ class _CorrecteurFake:
     def __init__(self, proposition: PropositionCorrection):
         self._proposition = proposition
         self.appels = 0
+        self.dernier_extrait: str | None = None
 
     async def proposer(self, anomalie, extrait_log, regle=None):
         self.appels += 1
+        self.dernier_extrait = extrait_log
         return self._proposition
 
 
@@ -141,6 +143,36 @@ class _ActionsFake:
 
     async def fermer_issue(self, depot, installation_id, numero, *, label=None) -> None:
         self.fermetures.append({"numero": numero, "label": label})
+
+
+class _ActionsAvecJobs(_ActionsFake):
+    """Client GitHub qui expose les jobs d'un run, comme l'API réelle.
+
+    `jobs` : liste de (id, nom, conclusion, log).
+    """
+
+    def __init__(self, jobs: list[tuple[int, str, str, str]]):
+        super().__init__()
+        self._jobs = jobs
+        self.jobs_telecharges: list[int] = []
+
+    async def lister_jobs_en_echec(self, depot, run_id, installation_id) -> list[dict]:
+        return [
+            {"id": ident, "nom": nom}
+            for ident, nom, conclusion, _ in self._jobs
+            if conclusion in ("failure", "timed_out")
+        ]
+
+    async def telecharger_logs_job(self, depot, job_id, installation_id) -> bytes:
+        self.jobs_telecharges.append(job_id)
+        texte = next(log for ident, _, _, log in self._jobs if ident == job_id)
+        return _zip_logs(texte)
+
+    async def telecharger_logs(self, depot, run_id, installation_id) -> bytes:
+        raise AssertionError(
+            "le log du run entier ne doit pas être téléchargé quand des jobs "
+            "en échec sont identifiés"
+        )
 
 
 class _WriterFake:
@@ -438,6 +470,121 @@ class TestExecutionSurApprobation:
         assert actions.fermetures[0]["label"] == "resolved"
         assert "manuel" in actions.commentaires[0]["corps"].lower()
         assert any(e.type_evenement == TypeEvenement.VALIDATION for e in writer.evenements)
+
+
+class TestCiblageDesJobsEnEchec:
+    """Régression kubernetes-formation#129.
+
+    Un run de matrice (33 jobs) dont 3 scans Trivy échouaient : Mirador
+    concaténait tout le run puis n'en gardait que la fin, tombait sur le log du
+    job « List Images to Scan » — qui avait RÉUSSI — et concluait « échec réseau
+    transitoire, relancer ». Le correcteur ne doit voir que les jobs en échec.
+    """
+
+    def _jobs_du_run_129(self) -> list[tuple[int, str, str, str]]:
+        # Le job réussi est volontairement plus verbeux que le budget entier :
+        # s'il fuite dans l'extrait, il évince tout le reste (le bug d'origine).
+        extraction_reussie = (
+            "Found 33 images\n" + "docker.elastic.co/kibana/kibana:8.17.7\n" * 3000
+        )
+        echec_trivy = (
+            "cassandra:4.1 (debian 11.9)\n"
+            "Total: 7 (HIGH: 5, CRITICAL: 2)\n"
+            "CVE-2024-45491 libexpat1 FIXED in 2.2.10-2+deb11u6\n"
+            "Error: Process completed with exit code 1.\n"
+        )
+        return [
+            (1, "List Images to Scan", "success", extraction_reussie),
+            (2, "Scan cassandra:4.1", "failure", echec_trivy),
+            (3, "Scan redis:alpine", "success", "Total: 0 (HIGH: 0, CRITICAL: 0)\n"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_le_correcteur_ne_voit_que_le_job_en_echec(self):
+        actions = _ActionsAvecJobs(self._jobs_du_run_129())
+        correcteur = _CorrecteurFake(
+            PropositionCorrection(type=TypeCorrection.ABSTENTION, justification="…")
+        )
+        traitement = _traitement(actions, _WriterFake(), correcteur)
+
+        await traitement.traiter(_message_workflow())
+
+        extrait = correcteur.dernier_extrait
+        # La cause réelle est sous les yeux du correcteur…
+        assert "CVE-2024-45491" in extrait
+        assert "Scan cassandra:4.1" in extrait
+        # …et le log du job réussi ne la noie pas.
+        assert "Found 33 images" not in extrait
+        assert actions.jobs_telecharges == [2]
+
+    @pytest.mark.asyncio
+    async def test_repli_sur_le_run_entier_sans_job_en_echec(self):
+        # Échec au niveau du run lui-même : aucun job fautif à cibler.
+        actions = _ActionsFake(_zip_logs("Error: connection timeout after 30s\n"))
+        correcteur = _CorrecteurFake(
+            PropositionCorrection(type=TypeCorrection.RELANCE, justification="…")
+        )
+        actions.lister_jobs_en_echec = _aucun_job
+        traitement = _traitement(actions, _WriterFake(), correcteur)
+
+        await traitement.traiter(_message_workflow())
+
+        assert "connection timeout" in correcteur.dernier_extrait
+
+
+async def _aucun_job(depot, run_id, installation_id) -> list[dict]:
+    return []
+
+
+class TestAbstention:
+    """Mirador dit « je ne sais pas » plutôt que d'inventer une cause."""
+
+    def _proposition(self) -> PropositionCorrection:
+        return PropositionCorrection(
+            type=TypeCorrection.ABSTENTION,
+            justification="Le log ne montre aucune erreur : étapes toutes réussies.",
+        )
+
+    @pytest.mark.asyncio
+    async def test_abstention_escalade_au_lieu_de_relancer(self):
+        actions = _ActionsFake(_zip_logs("connection timeout"))
+        correcteur = _CorrecteurFake(self._proposition())
+        writer = _WriterFake()
+        traitement = _traitement(actions, writer, correcteur)
+
+        await traitement.traiter(_message_workflow(head_branch="main"))
+
+        assert actions.relances == [], "une abstention ne doit rien relancer"
+        assert len(actions.issues_ouvertes) == 1
+        assert "Cause non identifiée" in actions.issues_ouvertes[0]["corps"]
+        # La proposition déjà payée est réutilisée : pas de second appel Claude.
+        assert correcteur.appels == 1
+
+    @pytest.mark.asyncio
+    async def test_approuver_une_abstention_ne_declenche_aucune_action(self):
+        actions = _ActionsFake()
+        writer = _WriterFake()
+
+        def lire_proposition(anomalie_id):
+            return {
+                "proposition": {
+                    "type": TypeCorrection.ABSTENTION,
+                    "justification": "Cause non identifiée.",
+                },
+                "workflow_run_id": 12345678,
+                "head_branch": "main",
+            }
+
+        traitement = _traitement(
+            actions, writer, _CorrecteurFake(self._proposition()),
+            lire_proposition=lire_proposition,
+        )
+
+        await traitement.traiter(_message_validation("approuver"))
+
+        assert actions.relances == [], "approuver « je ne sais pas » ne relance rien"
+        assert actions.prs == []
+        assert "aucune action automatique" in actions.commentaires[0]["corps"]
 
 
 class TestValidationHumaine:

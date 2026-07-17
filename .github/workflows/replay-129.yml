@@ -1,0 +1,38 @@
+name: Replay anomalie #129
+
+# Rejoue une anomalie réelle contre le vrai modèle Claude, sur les logs GitHub
+# authentiques d'un run où Mirador s'était trompé (kubernetes-formation#129 :
+# une cause « réseau transitoire » inventée à partir d'un job qui avait réussi).
+#
+# Manuel, et pas dans la CI de chaque push : l'appel au modèle est payant et son
+# verdict n'est pas strictement déterministe. À relancer quand on touche au
+# prompt du correcteur, au modèle, ou à la sélection des logs.
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  replay:
+    name: Replay #129 (appel Claude réel)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer uv
+        run: pip install uv
+
+      - name: Installer les dépendances
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Rejouer l'anomalie #129
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m tests.replay_129

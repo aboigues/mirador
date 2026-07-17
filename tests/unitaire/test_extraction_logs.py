@@ -7,7 +7,10 @@ le matching des règles (`pattern_log`). `extraire_texte_logs` dézippe d'abord.
 import io
 import zipfile
 
-from src.infrastructure.github.actions_client import extraire_texte_logs
+from src.infrastructure.github.actions_client import (
+    assembler_extrait_jobs,
+    extraire_texte_logs,
+)
 
 
 def _zip(entrees: dict[str, str]) -> bytes:
@@ -46,3 +49,43 @@ def test_octets_textuels_non_zip_retournes_tels_quels():
 
 def test_octets_vides_ne_plantent_pas():
     assert extraire_texte_logs(b"") == ""
+
+
+# --- assemblage des logs de jobs en échec (régression #129) ----------------
+
+
+def test_un_job_verbeux_n_evince_pas_les_autres():
+    # Le cœur du bug : sans partage du budget, le job bavard occupe toute la
+    # fenêtre et l'erreur des autres jobs n'atteint jamais le correcteur.
+    jobs = [
+        ("Scan A", "bruit\n" * 5000),
+        ("Scan B", "CVE-2024-45491 dans cassandra:4.1\n"),
+    ]
+    texte = assembler_extrait_jobs(jobs, budget=2000)
+    assert "CVE-2024-45491" in texte
+    assert "Scan A" in texte and "Scan B" in texte
+
+
+def test_budget_respecte():
+    jobs = [(f"Job {i}", "x" * 10000) for i in range(3)]
+    assert len(assembler_extrait_jobs(jobs, budget=3000)) <= 3000
+
+
+def test_garde_la_fin_du_log_ou_est_l_erreur():
+    jobs = [("Job", "PREMIERE_LIGNE\n" + "milieu\n" * 2000 + "Error: exit code 1\n")]
+    texte = assembler_extrait_jobs(jobs, budget=500)
+    assert "Error: exit code 1" in texte
+    assert "PREMIERE_LIGNE" not in texte
+
+
+def test_au_dela_de_cinq_jobs_les_noms_sont_cites():
+    jobs = [(f"Scan image-{i}", f"Error dans {i}\n") for i in range(8)]
+    texte = assembler_extrait_jobs(jobs, budget=4000)
+    # Les 8 sont nommés (l'humain voit l'ampleur), 5 sont détaillés.
+    assert "Scan image-7" in texte
+    assert "8 jobs en échec" in texte
+    assert texte.count("===== Job en échec") == 5
+
+
+def test_aucun_job_en_echec():
+    assert assembler_extrait_jobs([], budget=1000) == ""

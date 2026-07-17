@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+import re
 import zipfile
 from typing import Any, Optional, Protocol
 
@@ -17,6 +18,40 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _API_VERSION = "2022-11-28"
+
+# Conclusions d'un job qui valent la peine d'être analysées. `cancelled` et
+# `skipped` en sont exclus : leur log ne contient pas de cause.
+_CONCLUSIONS_ECHEC = frozenset({"failure", "timed_out"})
+
+# Au-delà, les parts de budget deviennent trop courtes pour porter une erreur.
+# Les jobs surnuméraires sont nommés en tête d'extrait, sans leur log.
+_MAX_JOBS_ANALYSES = 5
+
+_MARQUEUR_TRONCATURE = "[…début du log tronqué…]\n"
+
+# GitHub annote l'étape fautive par `##[error]…`. C'est le seul repère fiable
+# de l'endroit où regarder : la fin brute du log d'un job en échec, elle, ne
+# contient que le « Post job cleanup » exécuté APRÈS l'erreur.
+_MARQUEUR_ERREUR = "##[error]"
+
+# Chaque ligne de log GitHub est préfixée d'un horodatage ISO (~29 caractères)
+# sans valeur pour le diagnostic — le retirer rend ~25 % du budget au contexte.
+_HORODATAGE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ", re.MULTILINE)
+
+
+def _fenetre_utile(texte: str, taille: int) -> str:
+    """Extrait `taille` caractères de `texte`, centrés sur ce qui a échoué.
+
+    On se cale sur la DERNIÈRE annotation `##[error]` et on remonte : le
+    contexte qui la précède (sortie de l'outil, trace) porte la cause. À défaut
+    d'annotation, on retombe sur la fin du log.
+    """
+    coupe = texte.rfind(_MARQUEUR_ERREUR)
+    if coupe == -1:
+        return texte[-taille:]
+    fin = texte.find("\n", coupe)
+    fin = len(texte) if fin == -1 else fin + 1
+    return texte[max(0, fin - taille):fin]
 
 
 def extraire_texte_logs(contenu: bytes) -> str:
@@ -39,6 +74,44 @@ def extraire_texte_logs(contenu: bytes) -> str:
         return "\n".join(morceaux)
     except zipfile.BadZipFile:
         return contenu.decode("utf-8", errors="ignore")
+
+
+def assembler_extrait_jobs(jobs: list[tuple[str, str]], budget: int) -> str:
+    """Assemble les logs de plusieurs jobs en échec dans un budget de caractères.
+
+    Chaque job retenu reçoit une part égale du budget, dont on garde la FIN
+    (l'erreur y est). Le partage est le point clé : concaténer les jobs puis
+    tronquer globalement laisserait un seul job verbeux évincer tous les autres.
+    Le total retourné ne dépasse pas `budget`.
+    """
+    if not jobs:
+        return ""
+
+    entete_globale = ""
+    retenus = jobs
+    if len(jobs) > _MAX_JOBS_ANALYSES:
+        retenus = jobs[:_MAX_JOBS_ANALYSES]
+        noms = ", ".join(nom for nom, _ in jobs)
+        entete_globale = (
+            f"[{len(jobs)} jobs en échec : {noms}. "
+            f"Log des {_MAX_JOBS_ANALYSES} premiers seulement.]\n"
+        )
+
+    part = max((budget - len(entete_globale)) // len(retenus), 0)
+    morceaux = []
+    for nom, texte in retenus:
+        texte = _HORODATAGE.sub("", texte)
+        entete = f"===== Job en échec : {nom} =====\n"
+        disponible = part - len(entete) - len(_MARQUEUR_TRONCATURE) - 1
+        if disponible <= 0:
+            morceaux.append(entete.rstrip("\n")[:part])
+            continue
+        if len(texte) > disponible:
+            corps = _MARQUEUR_TRONCATURE + _fenetre_utile(texte, disponible)
+        else:
+            corps = texte
+        morceaux.append(entete + corps)
+    return entete_globale + "\n".join(morceaux)
 
 
 class FournisseurToken(Protocol):
@@ -89,6 +162,48 @@ class GitHubActionsClient:
         """Télécharge l'archive ZIP des logs d'un run (suit la redirection GitHub)."""
         reponse = await self._requete(
             "GET", f"/repos/{depot}/actions/runs/{run_id}/logs", installation_id
+        )
+        return reponse.content
+
+    async def lister_jobs_en_echec(
+        self, depot: str, run_id: int, installation_id: int
+    ) -> list[dict[str, Any]]:
+        """Jobs du run dont la conclusion est un échec : [{"id", "nom"}, …].
+
+        Pagine jusqu'au bout : un run de matrice dépasse couramment les 30 jobs
+        de la page par défaut, et le job fautif peut être sur n'importe laquelle.
+        """
+        jobs: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            reponse = await self._requete(
+                "GET",
+                f"/repos/{depot}/actions/runs/{run_id}/jobs"
+                f"?filter=latest&per_page=100&page={page}",
+                installation_id,
+            )
+            donnees = reponse.json()
+            lot = donnees.get("jobs", [])
+            jobs.extend(lot)
+            if not lot or len(jobs) >= donnees.get("total_count", 0):
+                break
+            page += 1
+
+        en_echec = [
+            {"id": job["id"], "nom": job.get("name", "")}
+            for job in jobs
+            if job.get("conclusion") in _CONCLUSIONS_ECHEC
+        ]
+        log.info("github.jobs_en_echec", depot=depot, run_id=run_id,
+                 total=len(jobs), en_echec=len(en_echec))
+        return en_echec
+
+    async def telecharger_logs_job(
+        self, depot: str, job_id: int, installation_id: int
+    ) -> bytes:
+        """Log d'un job précis (texte brut, pas une archive)."""
+        reponse = await self._requete(
+            "GET", f"/repos/{depot}/actions/jobs/{job_id}/logs", installation_id
         )
         return reponse.content
 
