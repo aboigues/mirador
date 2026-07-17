@@ -14,19 +14,27 @@ from typing import Any, Callable, Optional
 
 import structlog
 
-from src.agents.correcteur import TypeCorrection
+from src.agents.correcteur import MAX_LOG_CHARS, TypeCorrection
 from src.agents.superviseur import DecisionEscalade
 from src.domaine.anomalie import Anomalie
 from src.domaine.journal import EvenementJournal, TypeEvenement
 from src.domaine.regle import RegleDiagnostic
-from src.infrastructure.github.actions_client import extraire_texte_logs
+from src.infrastructure.github.actions_client import (
+    assembler_extrait_jobs,
+    extraire_texte_logs,
+)
 
 log = structlog.get_logger(__name__)
 
 _ACTEUR_AGENT = "mirador-agent"
 _ACTION_ECHEC = "ÉCHEC_EXÉCUTION"
 _ACTION_PR_CONSTRUCTION = "PR_EN_CONSTRUCTION"
+_ACTION_ABSTENTION = "ABSTENTION"
 _WORKFLOW_AUTOFIX = "mirador-autofix.yml"
+
+# Sentinelle : distingue « proposition non encore calculée » de « proposition
+# absente » (None = correcteur indisponible), qui sont deux cas différents.
+_A_CALCULER = object()
 
 
 class Traitement:
@@ -81,10 +89,9 @@ class Traitement:
         if not depot.actif:
             return
 
-        contenu_logs = await self._actions.telecharger_logs(
+        extrait_log = await self._recuperer_extrait_log(
             depot_nom, message.get("workflow_run_id"), depot.installation_id
         )
-        extrait_log = extraire_texte_logs(contenu_logs)
 
         anomalie = self._detecteur.detecter(
             message, depot.id, regles,
@@ -101,6 +108,47 @@ class Traitement:
             await self._intervenir(anomalie, depot, depot_nom, extrait_log, regles)
         else:  # NOTIFIER_ET_ATTENDRE ou VALIDATION_HUMAINE_REQUISE
             await self._escalader(anomalie, depot, depot_nom, extrait_log, regles)
+
+    async def _recuperer_extrait_log(
+        self, depot_nom: str, run_id: Any, installation_id: int
+    ) -> str:
+        """Extrait de log à analyser : les jobs EN ÉCHEC du run, et eux seuls.
+
+        Un run de matrice compte des dizaines de jobs. Concaténer tout le run puis
+        n'en garder que la fin donne au correcteur le log d'un job qui a RÉUSSI,
+        d'où une cause inventée de toutes pièces (kubernetes-formation#129 : 3 scans
+        Trivy en échec, Mirador a lu « List Images to Scan » et conclu « relance »).
+
+        Repli sur le log complet du run si aucun job en échec n'est identifiable —
+        l'échec est alors au niveau du run lui-même (annulation, erreur de config).
+        """
+        try:
+            jobs = await self._actions.lister_jobs_en_echec(
+                depot_nom, run_id, installation_id
+            )
+        except Exception as exc:
+            log.warning("logs.jobs_indisponibles",
+                        depot=depot_nom, run_id=run_id, err=str(exc))
+            jobs = []
+
+        if jobs:
+            morceaux = [
+                (
+                    job["nom"],
+                    extraire_texte_logs(
+                        await self._actions.telecharger_logs_job(
+                            depot_nom, job["id"], installation_id
+                        )
+                    ),
+                )
+                for job in jobs
+            ]
+            return assembler_extrait_jobs(morceaux, MAX_LOG_CHARS)
+
+        contenu_logs = await self._actions.telecharger_logs(
+            depot_nom, run_id, installation_id
+        )
+        return extraire_texte_logs(contenu_logs)
 
     async def _proposer(
         self, anomalie: Anomalie, extrait_log: str, regles: list[RegleDiagnostic]
@@ -133,6 +181,16 @@ class Traitement:
                 type_action=None,
             )
             return
+        if proposition.type == TypeCorrection.ABSTENTION:
+            # Le correcteur n'a pas identifié la cause : agir au hasard (relancer)
+            # gaspillerait un run et masquerait l'échec. On passe la main à un
+            # humain, en réutilisant la proposition déjà payée.
+            log.info("intervention.abstention", anomalie_id=str(anomalie.id))
+            await self._escalader(
+                anomalie, depot, depot_nom, extrait_log, regles,
+                proposition=proposition,
+            )
+            return
         anomalie.demarrer_traitement()
 
         if proposition.type == TypeCorrection.PULL_REQUEST:
@@ -158,11 +216,14 @@ class Traitement:
     async def _escalader(
         self, anomalie: Anomalie, depot: Any, depot_nom: str,
         extrait_log: str, regles: list[RegleDiagnostic],
+        proposition: Any = _A_CALCULER,
     ) -> None:
         # Calcule la proposition d'intervention et la PERSISTE dans l'événement
         # d'escalade : elle sera exécutée telle quelle si un responsable /approuver.
         # None si le correcteur est en panne — l'issue s'ouvre quand même.
-        proposition = await self._proposer(anomalie, extrait_log, regles)
+        # `proposition` peut être fournie par un appelant qui l'a déjà obtenue.
+        if proposition is _A_CALCULER:
+            proposition = await self._proposer(anomalie, extrait_log, regles)
 
         corps = _corps_issue(anomalie, depot_nom, proposition)
         await self._actions.ouvrir_issue(
@@ -236,6 +297,10 @@ class Traitement:
             return None
         proposition = details["proposition"]
         run_id = details.get("workflow_run_id")
+        if proposition.get("type") == TypeCorrection.ABSTENTION:
+            # Mirador n'a rien proposé : approuver une abstention ne déclenche
+            # aucune action (surtout pas la relance, branche par défaut ci-dessous).
+            return _ACTION_ABSTENTION
         try:
             if proposition.get("type") == TypeCorrection.PULL_REQUEST:
                 return await self._ouvrir_pull_request_correctif(
@@ -369,6 +434,9 @@ def _message_approbation(acteur: str, action: Optional[str]) -> str:
     if action == _ACTION_PR_CONSTRUCTION:
         return (f"✅ Approuvé par @{acteur} — correctif en cours de construction "
                 f"(build lancé) ; la pull request sera ouverte automatiquement.")
+    if action == _ACTION_ABSTENTION:
+        return (f"✅ Approuvé par @{acteur} — Mirador n'ayant identifié aucune cause, "
+                f"aucune action automatique n'a été déclenchée.")
     if action == _ACTION_ECHEC:
         return (f"✅ Approuvé par @{acteur} — l'exécution automatique de la proposition "
                 f"a échoué ; le correctif est à appliquer manuellement (voir les logs).")
@@ -395,6 +463,12 @@ def _section_proposition(proposition: Any) -> str:
                 "⚠️ Mirador n'a pas pu analyser cet échec (correcteur "
                 "indisponible) : aucune correction n'est proposée. L'anomalie "
                 "ci-dessus a bien été détectée et reste à traiter manuellement.\n\n")
+    if proposition.type == TypeCorrection.ABSTENTION:
+        return ("## Cause non identifiée\n\n"
+                f"🤷 Mirador ne propose pas de correction : {proposition.justification}\n\n"
+                "Aucune action automatique n'est associée à cette anomalie — "
+                "`/approuver` ne déclenchera rien. Le diagnostic revient à un "
+                "humain.\n\n")
     if proposition.type == TypeCorrection.PULL_REQUEST:
         detail = ""
         if proposition.corps_pr:

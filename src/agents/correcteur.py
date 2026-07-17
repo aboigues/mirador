@@ -4,7 +4,8 @@ Deux chemins :
 - Cause connue avec action RELANCE → proposition déterministe, sans appel LLM
   (économie de coût et de latence pour les incidents transitoires identifiés).
 - Cause inconnue ou correctif de code → analyse du log par Claude, qui propose
-  une RELANCE ou une PULL_REQUEST (jamais de commit direct — Principe III).
+  une RELANCE ou une PULL_REQUEST (jamais de commit direct — Principe III), ou
+  s'abstient (ABSTENTION) quand le log ne porte aucune erreur identifiable.
 
 Le modèle par défaut est Claude Haiku 4.5 : la tâche est une classification
 contrainte par une sortie structurée (json_schema), pour laquelle Haiku suffit à
@@ -27,14 +28,16 @@ log = structlog.get_logger(__name__)
 _MODELE_DEFAUT = "claude-haiku-4-5"
 _MAX_TOKENS = 4000
 # Les logs GitHub dézippés font des centaines de Ko ; envoyer le tout à chaque
-# appel Claude coûte très cher en tokens d'entrée. On ne garde que la fin du log
-# (les erreurs de CI y sont quasi toujours), plafonnée.
-_MAX_LOG_CHARS = 8000
+# appel Claude coûte très cher en tokens d'entrée. L'appelant est chargé de tenir
+# ce budget en ciblant les jobs en échec (cf. `assembler_extrait_jobs`) ; la
+# troncature ci-dessous n'est qu'un dernier filet, aveugle au découpage en jobs.
+MAX_LOG_CHARS = 8000
 
 
 class TypeCorrection:
     RELANCE = "RELANCE"
     PULL_REQUEST = "PULL_REQUEST"
+    ABSTENTION = "ABSTENTION"
 
 
 class RefusModele(Exception):
@@ -70,7 +73,14 @@ class PropositionCorrection(BaseModel):
 _SCHEMA_PROPOSITION: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "type": {"type": "string", "enum": [TypeCorrection.RELANCE, TypeCorrection.PULL_REQUEST]},
+        "type": {
+            "type": "string",
+            "enum": [
+                TypeCorrection.RELANCE,
+                TypeCorrection.PULL_REQUEST,
+                TypeCorrection.ABSTENTION,
+            ],
+        },
         "justification": {"type": "string"},
         "titre_pr": {"type": "string"},
         "corps_pr": {"type": "string"},
@@ -103,9 +113,19 @@ _SCHEMA_PROPOSITION: dict[str, Any] = {
 _SYSTEME = (
     "Tu es Mirador, un agent de surveillance CI/CD. À partir de l'extrait de log "
     "d'un workflow GitHub Actions en échec, tu identifies la cause et proposes UNE "
-    "intervention : RELANCE (si l'échec est transitoire — flaky test, timeout réseau) "
-    "ou PULL_REQUEST (si un correctif de code est nécessaire). Tu ne proposes jamais "
-    "de commit direct. Pour une PULL_REQUEST, fournis un titre, un corps, et — quand "
+    "intervention : RELANCE, PULL_REQUEST ou ABSTENTION.\n\n"
+    "Règle absolue : ta proposition doit s'appuyer sur un message d'erreur que tu "
+    "LIS dans l'extrait. Tu n'inventes jamais une cause plausible. Si l'extrait ne "
+    "montre aucune erreur — parce qu'il est tronqué, incomplet, ou ne contient que "
+    "des étapes réussies —, réponds ABSTENTION et dis dans `justification` ce que tu "
+    "as vu et ce qui te manque. Une hypothèse présentée comme une cause fait perdre "
+    "plus de temps qu'un « je ne sais pas » : un humain prendra le relais.\n\n"
+    "RELANCE seulement si le log montre explicitement un échec transitoire (timeout "
+    "réseau, flaky test, erreur 5xx d'un registre) ; cite le message dans la "
+    "justification. L'absence d'erreur visible n'est PAS une preuve que l'échec est "
+    "transitoire : c'est une ABSTENTION. PULL_REQUEST si un correctif de code est "
+    "nécessaire. Tu ne proposes jamais de commit direct.\n\n"
+    "Pour une PULL_REQUEST, fournis un titre, un corps, et — quand "
     "c'est possible et sûr — la liste `fichiers` des fichiers modifiés avec leur "
     "contenu COMPLET après correction (chemin + contenu), pour que la PR soit ouverte "
     "automatiquement. N'inclus dans `fichiers` que des fichiers que tu peux produire "
@@ -143,8 +163,8 @@ class Correcteur:
     async def _analyser_via_claude(
         self, anomalie: Anomalie, extrait_log: str
     ) -> PropositionCorrection:
-        log_tronque = extrait_log[-_MAX_LOG_CHARS:] if extrait_log else ""
-        if extrait_log and len(extrait_log) > _MAX_LOG_CHARS:
+        log_tronque = extrait_log[-MAX_LOG_CHARS:] if extrait_log else ""
+        if extrait_log and len(extrait_log) > MAX_LOG_CHARS:
             log_tronque = "[…début du log tronqué…]\n" + log_tronque
         invite = (
             f"Workflow « {anomalie.workflow_nom} » (run {anomalie.workflow_run_id}) "

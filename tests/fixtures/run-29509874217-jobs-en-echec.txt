@@ -1,0 +1,64 @@
+[6 jobs en échec : Scan cassandra:4.1, Scan fluent/fluentd-kubernetes-daemonset:v1.19-debian-elasticsearch8-amd64-1, Scan fluent/fluentd:v1.19.3-debian-2.2, Scan telemachlearning/wordpress:6.8-php8.3-apache, Scan tensorflow/tensorflow:2.18.0-gpu, Vulnerability Report. Log des 5 premiers seulement.]
+===== Job en échec : Scan cassandra:4.1 =====
+[…début du log tronqué…]
+──────┤                                                              │
+│ util-linux-extra      │                │          │              │                    │               │                                                              │
+│                       │                │          │              │                    │               │                                                              │
+│                       │                │          │              │                    │               │                                                              │
+├───────────────────────┼────────────────┼──────────┼──────────────┼────────────────────┼───────────────┼──────────────────────────────────────────────────────────────┤
+│ zlib1g                │ CVE-2023-45853 │ CRITICAL │ will_not_fix │ 1:1.2.13.dfsg-1    │               │ zlib: integer overflow and resultant heap-based buffer       │
+│                       │                │          │              │                    │               │ overflow in zipOpenNewFileInZip4_6                           │
+│                       │                │          │              │                    │               │ https://avd.aquasec.com/nvd/cve-2023-45853                   │
+└───────────────────────┴────────────────┴──────────┴──────────────┴────────────────────┴───────────────┴──────────────────────────────────────────────────────────────┘
+##[error]Process completed with exit code 1.
+
+===== Job en échec : Scan fluent/fluentd-kubernetes-daemonset:v1.19-debian-elasticsearch8-amd64-1 =====
+[…début du log tronqué…]
+───────────┤
+│               │ CVE-2026-9538  │          │ fix_deferred │                         │                  │ perl-Archive-Tar: perl-Archive-Tar: Denial of Service via    │
+│               │                │          │              │                         │                  │ crafted tar header with large entry...                       │
+│               │                │          │              │                         │                  │ https://avd.aquasec.com/nvd/cve-2026-9538                    │
+├───────────────┼────────────────┤          ├──────────────┼─────────────────────────┼──────────────────┼──────────────────────────────────────────────────────────────┤
+│ util-linux    │ CVE-2026-53615 │          │ affected     │ 2.41-5                  │                  │ [Integer Overflow or Wraparound in                           │
+│               │                │          │              │                         │                  │ libblkid/src/partitions/dos.c]                               │
+│               │                │          │              │                         │                  │ https://avd.aquasec.com/nvd/cve-2026-53615                   │
+└───────────────┴────────────────┴──────────┴──────────────┴─────────────────────────┴──────────────────┴──────────────────────────────────────────────────────────────┘
+##[error]Process completed with exit code 1.
+
+===== Job en échec : Scan fluent/fluentd:v1.19.3-debian-2.2 =====
+[…début du log tronqué…]
+──────────┼──────────────────────────────────────────────────────────────┤
+│               │ CVE-2026-9538  │          │ fix_deferred │                         │               │ perl-Archive-Tar: perl-Archive-Tar: Denial of Service via    │
+│               │                │          │              │                         │               │ crafted tar header with large entry...                       │
+│               │                │          │              │                         │               │ https://avd.aquasec.com/nvd/cve-2026-9538                    │
+├───────────────┼────────────────┤          ├──────────────┼─────────────────────────┼───────────────┼──────────────────────────────────────────────────────────────┤
+│ util-linux    │ CVE-2026-53615 │          │ affected     │ 2.41-5                  │               │ [Integer Overflow or Wraparound in                           │
+│               │                │          │              │                         │               │ libblkid/src/partitions/dos.c]                               │
+│               │                │          │              │                         │               │ https://avd.aquasec.com/nvd/cve-2026-53615                   │
+└───────────────┴────────────────┴──────────┴──────────────┴─────────────────────────┴───────────────┴──────────────────────────────────────────────────────────────┘
+##[error]Process completed with exit code 1.
+
+===== Job en échec : Scan telemachlearning/wordpress:6.8-php8.3-apache =====
+[…début du log tronqué…]
+    │ perl-Archive-Tar: perl-Archive-Tar: Denial of Service via    │
+│                         │                │          │              │                                      │               │ crafted tar header with large entry...                       │
+│                         │                │          │              │                                      │               │ https://avd.aquasec.com/nvd/cve-2026-9538                    │
+├─────────────────────────┼────────────────┤          ├──────────────┼──────────────────────────────────────┼───────────────┼──────────────────────────────────────────────────────────────┤
+│ util-linux              │ CVE-2026-53615 │          │ affected     │ 2.41-5                               │               │ [Integer Overflow or Wraparound in                           │
+│                         │                │          │              │                                      │               │ libblkid/src/partitions/dos.c]                               │
+│                         │                │          │              │                                      │               │ https://avd.aquasec.com/nvd/cve-2026-53615                   │
+└─────────────────────────┴────────────────┴──────────┴──────────────┴──────────────────────────────────────┴───────────────┴──────────────────────────────────────────────────────────────┘
+##[error]Process completed with exit code 1.
+
+===== Job en échec : Scan tensorflow/tensorflow:2.18.0-gpu =====
+[…début du log tronqué…]
+                  │
+│ python3.11-minimal        │                │          │          │                    │                   │                                                              │
+│                           │                │          │          │                    │                   │                                                              │
+│                           │                │          │          │                    │                   │                                                              │
+├───────────────────────────┤                │          │          │                    ├───────────────────┤                                                              │
+│ python3.11-venv           │                │          │          │                    │                   │                                                              │
+│                           │                │          │          │                    │                   │                                                              │
+│                           │                │          │          │                    │                   │                                                              │
+└───────────────────────────┴────────────────┴──────────┴──────────┴────────────────────┴───────────────────┴──────────────────────────────────────────────────────────────┘
+##[error]Process completed with exit code 1.
