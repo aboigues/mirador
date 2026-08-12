@@ -105,10 +105,11 @@ class _CorrecteurEnPanne:
 
 class _ActionsFake:
     def __init__(self, logs: bytes = b"aucun pattern", arbre: list | None = None,
-                 contenus: dict | None = None):
+                 contenus: dict | None = None, resultats_recherche: dict | None = None):
         self._logs = logs
         self._arbre = arbre or []
         self._contenus = contenus or {}
+        self._resultats_recherche = resultats_recherche or {}
         self.relances: list = []
         self.prs: list = []
         self.issues_ouvertes: list = []
@@ -119,6 +120,7 @@ class _ActionsFake:
         self.workflows: list = []
         self.appels_lister_fichiers: list = []
         self.appels_lire_fichier: list = []
+        self.appels_chercher_code: list = []
 
     async def telecharger_logs(self, depot, run_id, installation_id) -> bytes:
         return self._logs
@@ -130,6 +132,10 @@ class _ActionsFake:
     async def lire_fichier(self, depot, chemin, ref, installation_id):
         self.appels_lire_fichier.append(chemin)
         return self._contenus.get(chemin)
+
+    async def chercher_code(self, depot, requete, installation_id) -> list[str]:
+        self.appels_chercher_code.append(requete)
+        return self._resultats_recherche.get(requete, [])
 
     async def declencher_workflow(self, depot, fichier_workflow, ref, inputs, installation_id) -> None:
         self.workflows.append({"fichier": fichier_workflow, "ref": ref, "inputs": inputs})
@@ -334,6 +340,31 @@ class TestContexteDepot:
         # Le correctif se matérialise ensuite normalement (chemin inchangé).
         assert len(actions.prs) == 1
         assert actions.fichiers[0]["chemin"] == "tp08/compose.yaml"
+
+    async def test_recherche_ciblee_priorise_le_fichier_pertinent_meme_gros(self):
+        # Régression kubernetes-formation#142 : un dépôt à centaines de petits
+        # manifestes évince par la taille le fichier réellement pertinent s'il
+        # est plus gros que les autres. La recherche ciblée (sur la référence
+        # d'image repérée dans le log) doit le trouver et le faire passer en
+        # priorité, malgré sa taille, devant les fichiers de repli.
+        fillers = [{"path": f"tp0{i}/manifest.yaml", "size": 80} for i in range(5)]
+        cible = {"path": "tp03/14-network-storage-examples-secure.yaml", "size": 16000}
+        actions = _ActionsFake(
+            logs=b"Scan amazon/aws-cli:2.36.8 : CVE-2026-44605 (rpm) HIGH",
+            arbre=fillers + [cible],
+            contenus={
+                **{f["path"]: "contenu filler\n" for f in fillers},
+                cible["path"]: "CIBLE_AWS_CLI_CONTENU\n",
+            },
+            resultats_recherche={"amazon/aws-cli:2.36.8": [cible["path"]]},
+        )
+        writer = _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.ABSTENTION, justification="x"))
+        traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
+        await traitement.traiter(_message_workflow())
+        assert actions.appels_chercher_code == ["amazon/aws-cli:2.36.8"]
+        assert cible["path"] in correcteur.dernier_contexte_depot
+        assert "CIBLE_AWS_CLI_CONTENU" in correcteur.dernier_contexte_depot
 
     async def test_panne_de_lecture_depot_n_empeche_pas_le_traitement(self):
         actions, writer = _ActionsFake(), _WriterFake()

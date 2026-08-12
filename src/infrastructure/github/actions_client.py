@@ -47,6 +47,16 @@ _PATTERN_MANIFESTE = re.compile(
     r"(^|/)(Dockerfile|Containerfile)([.\-][\w.\-]*)?$|\.ya?ml$", re.IGNORECASE
 )
 
+# Référence d'image Docker plausible : `[namespace/]repo:tag`, sans espace de
+# part et d'autre du « : » (contrairement à un couple clé/valeur YAML « clé:
+# valeur », toujours espacé) ni de « // » derrière (exclut les URLs). Repéré
+# dans un log libre (nom de job, table Trivy...), pas dans un fichier structuré
+# — d'où l'absence de garantie à 100 %, compensée par le filtre sur le tag.
+_PATTERN_REFERENCE_IMAGE = re.compile(r"\b((?:[\w][\w.-]*/)*[\w][\w.-]*):([\w][\w.-]*)\b")
+# Plafond du nombre de références distinctes recherchées (borne les appels à
+# l'API Code Search, elle-même limitée à 10 req/min).
+_MAX_RECHERCHES_IMAGES = 5
+
 
 def _fenetre_utile(texte: str, taille: int) -> str:
     """Extrait `taille` caractères de `texte`, centrés sur ce qui a échoué.
@@ -123,6 +133,28 @@ def assembler_extrait_jobs(jobs: list[tuple[str, str]], budget: int) -> str:
     return entete_globale + "\n".join(morceaux)
 
 
+def extraire_references_images(texte: str) -> list[str]:
+    """Références d'image Docker plausibles (`namespace/repo:tag`) trouvées dans
+    un texte libre (log, nom de job...). Utilisé pour cibler la recherche des
+    fichiers du dépôt qui référencent l'image en cause (Code Search), plutôt que
+    de parcourir le dépôt à l'aveugle — un dépôt avec des centaines de petits
+    manifestes évince sinon les quelques fichiers pertinents (cf. kubernetes-
+    formation#142 : 194 manifestes, les 3 fichiers utiles classés 98e/150e/190e
+    par taille).
+
+    Best-effort : quelques faux positifs passent le filtre (peu coûteux, une
+    recherche infructueuse ne coûte qu'un appel API) ; les horodatages courts
+    (« 05:13 ») sont explicitement écartés, seule source de bruit fréquente.
+    """
+    vues: dict[str, None] = {}
+    for correspondance in _PATTERN_REFERENCE_IMAGE.finditer(texte):
+        reference, tag = correspondance.group(1), correspondance.group(2)
+        if tag.isdigit() and len(tag) <= 2:
+            continue  # horodatage (05:13) ou port, pas un tag d'image
+        vues.setdefault(f"{reference}:{tag}", None)
+    return list(vues)[:_MAX_RECHERCHES_IMAGES]
+
+
 def est_fichier_manifeste(chemin: str) -> bool:
     """Un fichier de manifeste/config (YAML, Dockerfile) susceptible de référencer
     une image ou une dépendance — candidat pour le contexte dépôt du correcteur."""
@@ -183,10 +215,13 @@ class GitHubActionsClient:
         installation_id: int,
         *,
         json: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
     ) -> httpx.Response:
         entetes = await self._entetes(installation_id)
         async with httpx.AsyncClient(base_url=self._base_url, follow_redirects=True) as client:
-            reponse = await client.request(methode, chemin, headers=entetes, json=json)
+            reponse = await client.request(
+                methode, chemin, headers=entetes, json=json, params=params
+            )
         reponse.raise_for_status()
         return reponse
 
@@ -415,3 +450,21 @@ class GitHubActionsClient:
             return base64.b64decode(donnees["content"]).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             return None  # fichier binaire
+
+    async def chercher_code(
+        self, depot: str, requete: str, installation_id: int
+    ) -> list[str]:
+        """Chemins des fichiers (branche par défaut) dont le contenu contient
+        `requete` (GitHub Code Search). Cible une référence d'image/dépendance
+        précise au lieu de parcourir le dépôt à l'aveugle — bien plus efficace
+        sur un dépôt à centaines de petits manifestes.
+
+        Ne masque pas les erreurs : l'appelant (`Traitement._recuperer_contexte_depot`)
+        est déjà résilient par construction à une recherche indisponible.
+        """
+        reponse = await self._requete(
+            "GET", "/search/code", installation_id,
+            params={"q": f"{requete} repo:{depot}"},
+        )
+        donnees = reponse.json()
+        return [item["path"] for item in donnees.get("items", [])]

@@ -1,73 +1,108 @@
---- .claude/templates/secure-deployment.yaml ---
-# Template de Deployment Kubernetes Sécurisé
-# Copier ce template et l'adapter selon les besoins
-# Guide complet : .claude/SECURITY.md
+--- tp03/14-network-storage-examples-secure.yaml ---
+# Exemples de configurations de stockage réseau sécurisé
+# NFS, iSCSI et autres backends de stockage réseau
 
+---
+# Exemple 1: PersistentVolume NFS avec options de sécurité
+# Use case: Partage de fichiers statiques entre plusieurs pods
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-shared-assets-pv
+  labels:
+    type: nfs
+    tier: shared-storage
+    environment: production
+spec:
+  capacity:
+    storage: 100Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany  # Plusieurs pods peuvent lire/écrire simultanément
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-shared-secure
+  mountOptions:
+    # Options de sécurité et performance NFS
+    - nfsvers=4.1       # Version NFSv4.1 minimum (support Kerberos)
+    - hard              # Mode hard: réessayer en cas d'échec réseau
+    - intr              # Interruptible par signal
+    - noatime           # Ne pas mettre à jour access time (performance)
+    - nodiratime        # Ne pas mettre à jour directory access time
+    - rsize=1048576     # Read size: 1MB
+    - wsize=1048576     # Write size: 1MB
+    - timeo=600         # Timeout: 60 secondes
+    - retrans=2         # Nombre de retransmissions avant erreur
+    - sec=sys           # Sécurité: sys (remplacer par krb5 si Kerberos disponible)
+  nfs:
+    server: nfs-server.internal.company.com
+    path: "/exports/kubernetes/shared-assets"
+
+---
+# PVC pour consommer le PV NFS
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-shared-assets-pvc
+  namespace: production
+  labels:
+    app: web-assets
+spec:
+  storageClassName: nfs-shared-secure
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  selector:
+    matchLabels:
+      type: nfs
+      tier: shared-storage
+
+---
+# Deployment utilisant le NFS partagé pour des assets web
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mon-app
-  namespace: mon-namespace
-  labels:
-    app: mon-app
-    tier: backend
+  name: web-frontend
+  namespace: production
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
-      app: mon-app
+      app: web-frontend
   template:
     metadata:
       labels:
-        app: mon-app
-        tier: backend
+        app: web-frontend
+        access-nfs: "true"  # Pour NetworkPolicy
     spec:
-      # ═══════════════════════════════════════════════════════
-      # SECURITY CONTEXT POD (OBLIGATOIRE)
-      # ═══════════════════════════════════════════════════════
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000  # À adapter selon l'image (nginx=101, postgres=70, redis=999)
-        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 2000
+        fsGroupChangePolicy: "OnRootMismatch"
         seccompProfile:
           type: RuntimeDefault
-
       containers:
-      - name: mon-app
-        image: mon-image:latest
-
+      - name: nginx
+        image: telemachlearning/nginx:1.29-alpine
         ports:
         - containerPort: 8080
-          name: http
-
-        # ═══════════════════════════════════════════════════════
-        # SECURITY CONTEXT CONTAINER (OBLIGATOIRE)
-        # ═══════════════════════════════════════════════════════
+        volumeMounts:
+        - name: shared-assets
+          mountPath: /usr/share/nginx/html/assets
+          readOnly: true  # Lecture seule pour les frontends
+        - name: cache
+          mountPath: /var/cache/nginx
+        - name: tmp
+          mountPath: /tmp
         securityContext:
           allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
-          runAsUser: 1000
           capabilities:
             drop:
             - ALL
-
-        # ═══════════════════════════════════════════════════════
-        # ENVIRONMENT VARIABLES
-        # ═══════════════════════════════════════════════════════
-        env:
-        - name: EXAMPLE_VAR
-          value: "example-value"
-        # Pour les secrets, utiliser secretKeyRef :
-        # - name: DB_PASSWORD
-        #   valueFrom:
-        #     secretKeyRef:
-        #       name: mon-secret
-        #       key: password
-
-        # ═══════════════════════════════════════════════════════
-        # RESOURCES (OBLIGATOIRE)
-        # ═══════════════════════════════════════════════════════
+          readOnlyRootFilesystem: true
         resources:
           requests:
             memory: "128Mi"
@@ -75,265 +110,1210 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "200m"
+      volumes:
+      - name: shared-assets
+        persistentVolumeClaim:
+          claimName: nfs-shared-assets-pvc
+      - name: cache
+        emptyDir:
+          sizeLimit: 100Mi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 50Mi
 
-        # ═══════════════════════════════════════════════════════
-        # HEALTH CHECKS (RECOMMANDÉ)
-        # ═══════════════════════════════════════════════════════
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          failureThreshold: 3
+---
+# NetworkPolicy pour restreindre l'accès au serveur NFS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nfs-server-access-policy
+  namespace: storage-system
+spec:
+  podSelector:
+    matchLabels:
+      app: nfs-server
+  policyTypes:
+  - Ingress
+  ingress:
+  # Autoriser uniquement les pods avec le label access-nfs: "true"
+  - from:
+    - podSelector:
+        matchLabels:
+          access-nfs: "true"
+    - namespaceSelector:
+        matchLabels:
+          nfs-access: "allowed"
+    ports:
+    - protocol: TCP
+      port: 2049  # NFS
+    - protocol: TCP
+      port: 111   # RPC portmapper
+    - protocol: UDP
+      port: 111
 
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 5
-          failureThreshold: 3
+---
+# Exemple 2: iSCSI PersistentVolume avec authentification CHAP
+# Use case: Stockage block haute performance pour base de données
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iscsi-chap-secret
+  namespace: production
+type: kubernetes.io/iscsi-chap
+stringData:
+  # Credentials CHAP pour l'authentification iSCSI
+  # ⚠️ En production, utiliser un gestionnaire de secrets
+  node.session.auth.username: "iscsi-initiator-user"
+  node.session.auth.password: "SecurePassword!2024"
+  # Pour mutual CHAP (optionnel mais recommandé)
+  node.session.auth.username_in: "iscsi-target-user"
+  node.session.auth.password_in: "SecureTargetPassword!2024"
 
-        # ═══════════════════════════════════════════════════════
-        # VOLUMES (SI readOnlyRootFilesystem: true)
-        # ═══════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: iscsi-database-pv
+  labels:
+    type: iscsi
+    performance: high
+    tier: database
+spec:
+  capacity:
+    storage: 500Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce  # iSCSI est généralement RWO
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: iscsi-fast
+  iscsi:
+    targetPortal: 192.168.10.100:3260
+    iqn: iqn.2024-01.com.company.storage:lun.database01
+    lun: 1
+    fsType: ext4
+    readOnly: false
+    # Authentification CHAP
+    chapAuthDiscovery: true
+    chapAuthSession: true
+    secretRef:
+      name: iscsi-chap-secret
+    # Options iSCSI
+    portals:
+      - '192.168.10.101:3260'  # Portal secondaire pour HA
+      - '192.168.10.102:3260'  # Portal tertiaire
+
+---
+# PVC pour le volume iSCSI
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: iscsi-database-pvc
+  namespace: production
+spec:
+  storageClassName: iscsi-fast
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Gi
+  selector:
+    matchLabels:
+      type: iscsi
+      tier: database
+
+---
+# Exemple 3: Ceph RBD avec chiffrement
+# Use case: Stockage distribué on-premise
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ceph-secret
+  namespace: production
+type: kubernetes.io/rbd
+stringData:
+  # Clé d'authentification Ceph
+  key: AQD1h3xeK7fXBBAA8+A6h8QmZJ3K7j8F9x+8Yw==
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ceph-rbd-pv
+  labels:
+    type: ceph-rbd
+    tier: distributed-storage
+spec:
+  capacity:
+    storage: 1Ti
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ceph-rbd-encrypted
+  rbd:
+    monitors:
+      - 192.168.10.10:6789
+      - 192.168.10.11:6789
+      - 192.168.10.12:6789
+    pool: kubernetes
+    image: pv-data-001
+    fsType: ext4
+    readOnly: false
+    user: kubernetes
+    secretRef:
+      name: ceph-secret
+
+---
+# Exemple 4: Pod avec multiple types de stockage (best practices)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multi-storage-app
+  namespace: production
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 3000
+    fsGroup: 2000
+    seccompProfile:
+      type: RuntimeDefault
+
+  containers:
+  - name: app
+    image: myapp:1.0.0
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+
+    volumeMounts:
+    # Volume persistant pour les données importantes
+    - name: data
+      mountPath: /app/data
+      readOnly: false
+
+    # Volume NFS partagé pour les assets
+    - name: shared-assets
+      mountPath: /app/assets
+      readOnly: true
+
+    # Volume pour les fichiers de configuration
+    - name: config
+      mountPath: /app/config
+      readOnly: true
+
+    # Volume pour les secrets
+    - name: secrets
+      mountPath: /app/secrets
+      readOnly: true
+
+    # Volumes temporaires
+    - name: tmp
+      mountPath: /tmp
+    - name: cache
+      mountPath: /app/cache
+
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+  volumes:
+  # PVC pour données persistantes (peut être iSCSI, Ceph, EBS, etc.)
+  - name: data
+    persistentVolumeClaim:
+      claimName: app-data-pvc
+
+  # PVC NFS pour assets partagés
+  - name: shared-assets
+    persistentVolumeClaim:
+      claimName: nfs-shared-assets-pvc
+
+  # ConfigMap pour configuration
+  - name: config
+    configMap:
+      name: app-config
+      defaultMode: 0440  # r--r-----
+
+  # Secret pour credentials
+  - name: secrets
+    secret:
+      secretName: app-secrets
+      defaultMode: 0400  # r--------
+
+  # emptyDir pour fichiers temporaires
+  - name: tmp
+    emptyDir:
+      sizeLimit: 500Mi
+
+  # emptyDir en RAM pour cache
+  - name: cache
+    emptyDir:
+      medium: Memory
+      sizeLimit: 256Mi
+
+# ---
+# ⚠️⚠️⚠️ EXEMPLE DÉSACTIVÉ - NE PAS UTILISER EN PRODUCTION ⚠️⚠️⚠️
+#
+# Exemple 5: NFS Server déployé dans Kubernetes
+#
+# AVERTISSEMENT IMPORTANT:
+# - Ce serveur NFS nécessite des privilèges élevés (privileged: true, SYS_ADMIN)
+# - Il présente des RISQUES DE SÉCURITÉ MAJEURS
+# - Il NE DOIT JAMAIS être utilisé en production
+# - Cet exemple est commenté pour éviter les déploiements accidentels
+#
+# Pour la production, TOUJOURS utiliser:
+# - Un serveur NFS dédié externe au cluster Kubernetes
+# - Un appliance NAS professionnel (NetApp, EMC, etc.)
+# - Un service cloud managé (AWS EFS, Azure Files, GCP Filestore)
+#
+# Si vous avez absolument besoin de comprendre comment fonctionne un serveur NFS
+# dans Kubernetes pour un environnement de développement LOCAL UNIQUEMENT:
+# 1. Décommentez ce code
+# 2. Comprenez les risques de sécurité
+# 3. Ne l'exposez JAMAIS à un réseau non sécurisé
+# 4. Supprimez-le immédiatement après vos tests
+#
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: nfs-server-storage
+#   namespace: storage-system
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   storageClassName: standard
+#   resources:
+#     requests:
+#       storage: 200Gi
+#
+# ---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: nfs-server
+#   namespace: storage-system
+#   annotations:
+#     # Avertissement pour les scanners de sécurité
+#     security.warning: "This NFS server requires elevated privileges and should NEVER be used in production"
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: nfs-server
+#   template:
+#     metadata:
+#       labels:
+#         app: nfs-server
+#       annotations:
+#         security.warning: "Privileged container - development only"
+#     spec:
+#       # ⚠️ RISQUE DE SÉCURITÉ: Le serveur NFS nécessite root
+#       securityContext:
+#         runAsNonRoot: false
+#         fsGroup: 65534
+#       containers:
+#       - name: nfs-server
+#         image: k8s.gcr.io/volume-nfs:0.8
+#         ports:
+#         - name: nfs
+#           containerPort: 2049
+#         - name: mountd
+#           containerPort: 20048
+#         - name: rpcbind
+#           containerPort: 111
+#         # ⚠️ RISQUE DE SÉCURITÉ CRITIQUE
+#         securityContext:
+#           privileged: true  # Donne accès complet au système hôte
+#           capabilities:
+#             add:
+#             - SYS_ADMIN  # Permet des opérations système privilégiées
+#             - SETPCAP
+#         volumeMounts:
+#         - name: storage
+#           mountPath: /exports
+#         resources:
+#           requests:
+#             memory: "256Mi"
+#             cpu: "250m"
+#           limits:
+#             memory: "512Mi"
+#             cpu: "500m"
+#       volumes:
+#       - name: storage
+#         persistentVolumeClaim:
+#           claimName: nfs-server-storage
+#
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: nfs-server
+#   namespace: storage-system
+# spec:
+#   selector:
+#     app: nfs-server
+#   ports:
+#   - name: nfs
+#     port: 2049
+#   - name: mountd
+#     port: 20048
+#   - name: rpcbind
+#     port: 111
+#   # Note: clusterIP statique peut causer des conflits
+#   # Utilisez plutôt un DNS interne
+#   # clusterIP: 10.96.0.100
+
+---
+# Exemple 6: StatefulSet avec stockage pour chaque replica
+# Use case: Cluster de bases de données (Cassandra, MongoDB, etc.)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database-cluster
+  namespace: production
+spec:
+  serviceName: database-cluster
+  replicas: 3
+  selector:
+    matchLabels:
+      app: database-cluster
+  template:
+    metadata:
+      labels:
+        app: database-cluster
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        fsGroupChangePolicy: "OnRootMismatch"
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: database
+        image: cassandra:4.1
+        ports:
+        - containerPort: 9042
+          name: cql
         volumeMounts:
-        # OBLIGATOIRE : Volume pour /tmp
+        - name: data
+          mountPath: /var/lib/cassandra
         - name: tmp
           mountPath: /tmp
-
-        # Ajouter d'autres volumes selon l'application :
-        # PostgreSQL : /var/run/postgresql
-        # Nginx : /var/cache/nginx, /var/run
-        # Python/pip : /home/nonroot
-        # Grafana : /var/lib/grafana, /var/log/grafana
+        - name: cassandra-logs
+          mountPath: /var/log/cassandra
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
 
       volumes:
       - name: tmp
-        emptyDir: {}
-      # - name: autre-volume
-      #   emptyDir: {}
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: cassandra-logs
+        emptyDir:
+          sizeLimit: 2Gi
 
-# ═══════════════════════════════════════════════════════════════
-# VALIDATION AVANT COMMIT :
-# ═══════════════════════════════════════════════════════════════
-# 1. trivy config --severity HIGH,CRITICAL mon-deployment.yaml
-# 2. kubeconform -strict mon-deployment.yaml
-# 3. kubectl apply --dry-run=server -f mon-deployment.yaml
-# ═══════════════════════════════════════════════════════════════
+  # VolumeClaimTemplates: crée un PVC par replica
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        app: database-cluster
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      storageClassName: database-with-snapshots
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+# Headless Service pour le StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-cluster
+  namespace: production
+spec:
+  selector:
+    app: database-cluster
+  ports:
+  - port: 9042
+    name: cql
+  clusterIP: None  # Headless
+
+---
+# Exemple 7: Backup Job pour sauvegarder les données vers S3
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup
+  namespace: production
+spec:
+  schedule: "0 2 * * *"  # Tous les jours à 2h du matin
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 2000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: backup
+            image: amazon/aws-cli:2.36.8
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Créer un snapshot du volume
+              TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+              tar czf /tmp/backup-${TIMESTAMP}.tar.gz /data
+
+              # Uploader vers S3
+              aws s3 cp /tmp/backup-${TIMESTAMP}.tar.gz \
+                s3://my-backups-bucket/database/backup-${TIMESTAMP}.tar.gz \
+                --storage-class STANDARD_IA
+
+              # Nettoyer
+              rm /tmp/backup-${TIMESTAMP}.tar.gz
+
+              echo "Backup completed: backup-${TIMESTAMP}.tar.gz"
+
+            env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+
+            volumeMounts:
+            - name: data
+              mountPath: /data
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: true
+
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "200m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+
+          volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: iscsi-database-pvc
+          - name: tmp
+            emptyDir:
+              sizeLimit: 10Gi
 
 
---- .github/workflows/rebuild-hardened-images.yml ---
-name: Rebuild Hardened Images
-
-# Reconstruit et republie les images durcies de docker/hardened/.
+--- docker/hardened/build.sh ---
+#!/usr/bin/env bash
+# Construit les images durcies, mesure le gain, et les publie avec --push.
 #
-# POURQUOI CE WORKFLOW EXISTE
+# Le tag reflète celui de l'amont (voir README.md). Une image dont le durcissement
+# n'apporte rien ne doit pas être publiée : c'est de la dette de maintenance.
 #
-# Un durcissement est une PHOTO, pas un état. `apk/apt upgrade` applique les
-# correctifs disponibles le jour du build ; dès que la distribution en publie
-# d'autres, l'image publiée redevient en retard sans que rien n'ait changé dans
-# le dépôt. Mesuré le 2026-07-27 : netshoot et wordpress, publiées à 0 CVE OS
-# corrigeable le 2026-07-16, en portaient 15 et 3 onze jours plus tard.
+# Sort en échec si une image reste avec des CVE OS corrigeables : c'est exactement
+# ce sur quoi la barrière de scan-images.yml bloquera le lundi suivant.
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+PUSH=false
+[[ "${1:-}" == "--push" ]] && PUSH=true
+
+# répertoire | image publiée | image amont (— si remplacement)
+IMAGES=(
+  "nginx|telemachlearning/nginx:1.29-alpine|nginx:1.29-alpine"
+  "trivy|telemachlearning/trivy:0.72.0|aquasec/trivy:0.72.0"
+  "git|telemachlearning/git:v2.54.0|alpine/git:v2.54.0"
+  "netshoot|telemachlearning/netshoot:v0.16|nicolaka/netshoot:v0.16"
+  "curl|telemachlearning/curl:8.21.0|curlimages/curl:8.21.0"
+  "httpd|telemachlearning/httpd:2.4-alpine|httpd:2.4-alpine"
+  "wordpress|telemachlearning/wordpress:6.8-php8.3-apache|wordpress:6.8-php8.3-apache"
+  "hpa-example|telemachlearning/hpa-example:1.0.0|—"
+)
+
+# Rend « <corrigeables>/<total> » pour les CVE de paquets OS CRITICAL+HIGH.
 #
-# Sans ce workflow, chaque lundi de scan rouge demandait un rebuild manuel — et
-# c'est le scan hebdomadaire qui servait de rappel, donc toujours a posteriori.
-#
-# COMPLÉMENTAIRE DE scan-images.yml, PAS REDONDANT : ce workflow répare l'amont
-# des images qu'on maîtrise, le scan constate l'état de TOUTES les images des TPs.
+# ⚠️ Le chiffre qui décide, c'est le PREMIER : la barrière de scan-images.yml ajoute
+# `ignore-unfixed: true` au filtre OS. Compter le total ferait diverger ce script de
+# la barrière — wordpress durcie affiche 0/163 : verte, alors qu'un décompte total
+# la dirait catastrophique. Les 163 n'ont aucun correctif publié, rien à en faire.
+count_os_cves() {
+  trivy image --quiet --scanners vuln --pkg-types os --severity CRITICAL,HIGH \
+    --format json "$1" 2>/dev/null |
+    python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+vulns = [v for r in (d.get("Results") or []) for v in (r.get("Vulnerabilities") or [])]
+print("%d/%d" % (sum(1 for v in vulns if v.get("FixedVersion")), len(vulns)))
+' 2>/dev/null || echo "?/?"
+}
 
-on:
-  schedule:
-    # Le 1er de chaque mois à 02:00 UTC, soit deux heures avant le premier scan
-    # hebdomadaire possible (lundi 04:00 UTC) : quand le scan passe, les images
-    # fraîchement publiées sont déjà en place.
-    - cron: '0 2 1 * *'
-  workflow_dispatch:
-    inputs:
-      push:
-        description: 'Publier les images sur Docker Hub'
-        type: boolean
-        default: true
-  # Sur modification des sources durcies, pour valider le build sans publier.
-  push:
-    branches: [ main, claude/** ]
-    paths:
-      - 'docker/hardened/**'
-      - '.github/workflows/rebuild-hardened-images.yml'
+failed=0
 
-permissions:
-  contents: read
+printf '%-46s %12s %12s\n' "IMAGE" "AMONT" "DURCIE"
+printf '%-46s %12s %12s\n' "" "(corr./tot.)" "(corr./tot.)"
+for entry in "${IMAGES[@]}"; do
+  IFS='|' read -r dir image upstream <<<"$entry"
 
-jobs:
-  rebuild:
-    name: Rebuild and publish hardened images
-    runs-on: ubuntu-latest
-    # Huit images reconstruites sans cache, dont wordpress (~1,2 Go) : le défaut
-    # de 6 h est large, mais une image qui pend ne doit pas bloquer un runner.
-    timeout-minutes: 60
+  # --no-cache --pull est obligatoire, pas une précaution : sans eux, Docker réutilise
+  # le layer `apk/apt upgrade` du build précédent et l'image reconstruite est identique
+  # à l'ancienne. Un re-durcissement serait un no-op silencieux (mesuré le 2026-07-27
+  # sur netshoot : 15 CVE avant, 15 après avec cache, 0 sans).
+  docker build --no-cache --pull -q -t "$image" "$dir" >/dev/null
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+  before="—"
+  [[ "$upstream" != "—" ]] && before=$(count_os_cves "$upstream")
+  after=$(count_os_cves "$image")
 
-      # build.sh mesure chaque image avec Trivy avant de la publier ; sans le
-      # binaire, le script rendrait « ?/? » pour tout et publierait à l'aveugle.
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.3.1
-        with:
-          version: 'v0.72.0'
+  printf '%-46s %12s %12s\n' "$image" "$before" "$after"
 
-      # Un push sur une branche ne publie jamais : il valide seulement que les
-      # Dockerfiles construisent encore et mesure la dérive.
-      - name: Decide whether to publish
-        id: mode
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            publish=false
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            publish="${{ inputs.push }}"
-          else
-            publish=true
-          fi
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "Publication : $publish"
+  if [[ "${after%%/*}" != "0" ]]; then
+    echo "  ⚠️  $image garde des CVE OS corrigeables : la barrière bloquera dessus." >&2
+    failed=1
+  fi
 
-      # Échec explicite plutôt qu'un `docker push` qui échouerait image par image
-      # après 40 minutes de build : les secrets manquants sont une erreur de
-      # configuration du dépôt, pas un incident de sécurité.
-      - name: Check Docker Hub credentials
-        if: steps.mode.outputs.publish == 'true'
+  if $PUSH; then
+    docker push -q "$image" >/dev/null && echo "  ✅ poussée"
+  fi
+done
+
+exit "$failed"
+
+
+--- tp02/exercice10/wordpress-app.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-pvc
+  namespace: wordpress-app
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  namespace: wordpress-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wordpress
+  template:
+    metadata:
+      labels:
+        app: wordpress
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: wordpress
+        image: telemachlearning/wordpress:6.8-php8.3-apache
         env:
-          USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          if [ -z "$USERNAME" ] || [ -z "$TOKEN" ]; then
-            echo "❌ Secrets DOCKERHUB_USERNAME / DOCKERHUB_TOKEN absents."
-            echo "   Les créer dans Settings → Secrets and variables → Actions,"
-            echo "   avec un token ayant le droit d'écriture sur l'org telemachlearning."
-            exit 1
-          fi
+        - name: WORDPRESS_DB_HOST
+          value: mysql-service
+        - name: WORDPRESS_DB_USER
+          value: root
+        - name: WORDPRESS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: password
+        - name: WORDPRESS_DB_NAME
+          value: wordpress
+        # Port 80 est utilisé pour la compatibilité standard WordPress/Apache
+        # L'image officielle est configurée pour écouter sur ce port avec l'utilisateur www-data
+        ports:
+        - containerPort: 80
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 33
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: wordpress-storage
+          mountPath: /var/www/html
+        - name: tmp
+          mountPath: /tmp
+        - name: run-apache
+          mountPath: /var/run/apache2
+        - name: lock-apache
+          mountPath: /var/lock/apache2
+      volumes:
+      - name: wordpress-storage
+        persistentVolumeClaim:
+          claimName: wordpress-pvc
+      - name: tmp
+        emptyDir: {}
+      - name: run-apache
+        emptyDir: {}
+      - name: lock-apache
+        emptyDir: {}
 
-      - name: Log in to Docker Hub
-        if: steps.mode.outputs.publish == 'true'
-        uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build, measure and publish
-        id: build
-        run: |
-          args=""
-          [ "${{ steps.mode.outputs.publish }}" = "true" ] && args="--push"
-
-          # build.sh sort en 1 si une image garde des CVE OS corrigeables. Le code
-          # est mis de côté le temps d'écrire le résumé : `set -e` couperait le
-          # rapport au moment précis où il a quelque chose à dire (même raison que
-          # dans le job `report` de scan-images.yml).
-          set +e
-          ./docker/hardened/build.sh $args 2>&1 | tee build.log
-          status=${PIPESTATUS[0]}
-          set -e
-
-          {
-            echo "## Reconstruction des images durcies"
-            echo ""
-            echo "Publication : \`${{ steps.mode.outputs.publish }}\`"
-            echo ""
-            echo '```'
-            cat build.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$status" -ne 0 ]; then
-            {
-              echo ""
-              echo "> ⚠️ Une image au moins garde des **CVE OS corrigeables** après"
-              echo "> \`apk/apt upgrade\`. La barrière de \`scan-images.yml\` bloquera"
-              echo "> dessus au prochain scan."
-              echo ">"
-              echo "> Un durcissement qui ne suffit plus veut souvent dire que l'amont"
-              echo "> a bougé : vérifier s'il existe un tag plus récent **en mesurant**,"
-              echo "> un bump pouvant aggraver (voir \`docker/hardened/README.md\`)."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-          exit "$status"
-
-
---- docker/hardened/curl/Dockerfile ---
-# Image durcie : curlimages/curl:8.21.0
-# Seule modification : mise à jour des paquets OS de la distribution.
-# L'entrypoint et la commande restent inchangés.
-#
-# Seule image durcie dont l'amont tourne DÉJÀ en non-root : il faut donc repasser
-# root le temps du `apk upgrade`, puis restaurer l'utilisateur d'origine.
-FROM curlimages/curl:8.21.0
-USER root
-RUN apk upgrade --no-cache
-# 100 = curl_user, l'utilisateur de l'amont. Écrit en numérique et non par son nom :
-# `runAsNonRoot: true` demande au kubelet de refuser un conteneur qui tournerait en
-# root, et il ne sait le vérifier avant démarrage que sur un UID numérique.
-USER 100
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-service
+  namespace: wordpress-app
+spec:
+  type: NodePort
+  selector:
+    app: wordpress
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
 
 
---- docker/hardened/git/Dockerfile ---
-# Image durcie : alpine/git:v2.54.0
-# Deux modifications, et rien d'autre :
-#   1. mise à jour des paquets OS de la distribution ;
-#   2. un utilisateur final NON-ROOT (DS-0002).
-# L'entrypoint et la commande restent inchangés.
-#
-# L'UID est numérique et non un nom : `runAsNonRoot: true` demande au kubelet de
-# refuser un conteneur qui tournerait en root, et il ne sait le vérifier avant
-# démarrage que sur un UID numérique. Un `USER nginx` le laisserait passer.
-FROM alpine/git:v2.54.0
-RUN apk upgrade --no-cache
-# 65534 = nobody. Aucun chown nécessaire : vérifié, `git --version` fonctionne.
-USER 65534
+--- tp02/exercice10/wordpress-namespace.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wordpress-app
 
 
---- docker/hardened/hpa-example/Dockerfile ---
-# Remplacement de registry.k8s.io/hpa-example.
-#
-# Multi-stage : le binaire est compilé ici, pas fourni à côté. Un `docker build`
-# depuis un clone du dépôt suffit à reproduire l'image publiée.
-FROM golang:1.26.5-alpine AS build
-WORKDIR /src
-COPY go.mod main.go ./
-# CGO_ENABLED=0 : binaire statique, indispensable pour tourner dans scratch
-# (aucune libc n'y est présente).
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /server main.go
-
-# Aucune image de base : scratch ne contient aucun paquet OS, donc aucune CVE OS
-# n'est possible par construction — et il n'y aura jamais de re-durcissement à faire.
-FROM scratch
-COPY --from=build /server /server
-# 65534 = nobody. Pas de /etc/passwd dans scratch, l'uid numérique est donc requis.
-USER 65534
-EXPOSE 8080
-ENTRYPOINT ["/server"]
+--- tp05/01-serviceaccount.yaml ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-app-sa
+  namespace: default
 
 
---- docker/hardened/httpd/Dockerfile ---
-# Image durcie : httpd:2.4-alpine
-# Deux modifications, et rien d'autre :
-#   1. mise à jour des paquets OS de la distribution ;
-#   2. un utilisateur final NON-ROOT (DS-0002).
-# L'entrypoint et la commande restent inchangés.
-#
-# L'UID est numérique et non un nom : `runAsNonRoot: true` demande au kubelet de
-# refuser un conteneur qui tournerait en root, et il ne sait le vérifier avant
-# démarrage que sur un UID numérique. Un `USER nginx` le laisserait passer.
-FROM httpd:2.4-alpine
-RUN apk upgrade --no-cache \
-    # httpd écrit son PID dans logs/ au démarrage : sans ce chown, il échoue sur
-    # « could not create /usr/local/apache2/logs/httpd.pid ».
-    && chown -R 82:82 /usr/local/apache2/logs
-# 82 = www-data (Alpine)
-USER 82
+--- tp06/01-helm/custom-values.yaml ---
+replicaCount: 3
+
+image:
+  tag: "1.26-alpine"
+
+resources:
+  limits:
+    memory: 256Mi
+  requests:
+    memory: 128Mi
 
 
-[34 fichier(s) omis (budget dépassé) : .github/workflows/scan-images.yml, .trivyignore-manifests.yaml, .trivyignore.yaml, docker/hardened/netshoot/Dockerfile, docker/hardened/nginx/Dockerfile, docker/hardened/trivy/Dockerfile, docker/hardened/wordpress/Dockerfile, github-workflows-setup/test-kubernetes-manifests.yml, tp01/architecture-complete.yaml, tp01/frontend-loadbalancer.yaml, tp01/redis-clusterip.yaml, tp01/webapp-nodeport.yaml, tp02/exercice10/wordpress-app.yaml, tp02/exercice10/wordpress-mysql.yaml, tp02/exercice10/wordpress-namespace.yaml, tp02/exercice10/wordpress-secret.yaml, tp03/01-emptydir-pod.yaml, tp03/02-storage-class-manual.yaml, tp03/03-persistent-volume.yaml, tp03/04-persistent-volume-claim.yaml, tp03/05-pod-with-pvc.yaml, tp03/06-storage-class-kubeadm.yaml, tp03/06-storage-class-minikube.yaml, tp03/07-dynamic-pvc.yaml, tp03/08-mysql-deployment.yaml, tp03/09-mysql-client.yaml, tp03/10-pv-retain.yaml, tp03/11-volume-snapshot.yaml, tp03/12-mysql-deployment-secure.yaml, tp03/13-storage-class-examples-secure.yaml, tp03/14-network-storage-examples-secure.yaml, tp04/01-hpa-demo.yaml, tp04/02-logging-demo.yaml, tp04/03-multi-container-logging.yaml]
+--- tp02/exercice10/wordpress-secret.yaml ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+  namespace: wordpress-app
+type: Opaque
+stringData:
+  password: wordpress123
+
+
+--- tp06/07-gitops-structure/base/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- deployment.yaml
+- service.yaml
+
+commonLabels:
+  app: my-app
+
+
+--- tp06/07-gitops-structure/base/service.yaml ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app
+spec:
+  selector:
+    app: my-app
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+
+
+--- tp07/kubernetes-manifests/00-namespace.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: myapp
+  labels:
+    name: myapp
+    environment: development
+    purpose: docker-compose-migration
+
+
+--- tp03/02-storage-class-manual.yaml ---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: manual
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+
+
+--- tp03/09-mysql-client.yaml ---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mysql-client
+spec:
+  containers:
+  - name: mysql-client
+    image: mysql:8.4
+    command: ['sh', '-c', 'sleep 3600']
+
+
+--- tp05/12-network-policy-deny-all.yaml ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+
+--- tp05/03-role-pod-reader.yaml ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+
+--- tp06/01-helm/my-app/values-dev.yaml ---
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: "1.25-alpine"
+  pullPolicy: Always
+
+resources:
+  limits:
+    memory: 128Mi
+    cpu: 200m
+  requests:
+    memory: 64Mi
+    cpu: 100m
+
+
+--- tp11/examples/01-namespace.yaml ---
+# TP11 - Namespace de travail
+# Utilisation : kubectl apply -f 01-namespace.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tp11
+  labels:
+    kubernetes.io/metadata.name: tp11
+
+
+--- tp03/04-persistent-volume-claim.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-demo
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Mi
+
+
+--- tp06/07-gitops-structure/overlays/dev/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: dev
+
+resources:
+- ../../base
+
+patchesStrategicMerge:
+- patch-deployment.yaml
+
+commonLabels:
+  environment: dev
+
+
+--- tp03/07-dynamic-pvc.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dynamic-pvc
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+
+--- tp06/07-gitops-structure/overlays/staging/kustomization.yaml ---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: staging
+
+resources:
+- ../../base
+
+patchesStrategicMerge:
+- patch-deployment.yaml
+
+commonLabels:
+  environment: staging
+
+
+--- tp10/02-postgres-secret.yaml ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: taskflow
+type: Opaque
+stringData:
+  POSTGRES_USER: taskflow
+  POSTGRES_PASSWORD: taskflow2024
+  POSTGRES_DB: taskflow_db
+
+
+--- tp03/11-volume-snapshot.yaml ---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: mysql-snapshot
+spec:
+  volumeSnapshotClassName: csi-hostpath-snapclass
+  source:
+    persistentVolumeClaimName: mysql-pvc
+
+
+--- tp03/06-storage-class-kubeadm.yaml ---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-storage
+provisioner: rancher.io/local-path
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+
+
+--- tp05/02-pod-with-sa.yaml ---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-with-sa
+spec:
+  serviceAccountName: my-app-sa
+  containers:
+  - name: app
+    image: telemachlearning/nginx:1.29-alpine
+    command: ['sh', '-c', 'sleep 3600']
+
+
+--- tp10/03-postgres-pvc.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: taskflow
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: standard
+
+
+--- tp06/01-helm/my-app/Chart.yaml ---
+apiVersion: v2
+name: my-app
+description: Une application web simple
+type: application
+version: 0.1.0
+appVersion: "1.0"
+keywords:
+  - web
+  - demo
+maintainers:
+  - name: Your Name
+    email: your.email@example.com
+
+
+--- tp10/17-prometheus-pvc.yaml ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  namespace: taskflow
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+
+
+--- tp03/03-persistent-volume.yaml ---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-demo
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data"
+
+
+--- tp03/06-storage-class-minikube.yaml ---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-storage
+provisioner: k8s.io/minikube-hostpath
+parameters:
+  type: pd-ssd
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+
+
+--- tp05/10-namespace-pss.yaml ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secure-namespace
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+
+--- tp10/07-redis-service.yaml ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: taskflow
+  labels:
+    app: redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  selector:
+    app: redis
+
+
+--- tp10/14-frontend-service.yaml ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: taskflow
+  labels:
+    app: frontend
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: frontend
+
+
+--- tp10/21-grafana-service.yaml ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: taskflow
+  labels:
+    app: grafana
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 3000
+    targetPort: 3000
+    protocol: TCP
+    name: http
+  selector:
+    app: grafana
+
+
+--- tp10/05-postgres-service.yaml ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: taskflow
+  labels:
+    app: postgres
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres
+
+
+--- tp03/10-pv-retain.yaml ---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-retain
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: "/mnt/data-retain"
+
+
+--- tp10/19-prometheus-service.yaml ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: taskflow
+  labels:
+    app: prometheus
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: http
+  selector:
+    app: prometheus
+
+
+--- tp10/10-backend-service.yaml ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api
+  namespace: taskflow
+  labels:
+    app: backend-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5000
+    targetPort: 5000
+    protocol: TCP
+    name: http
+  selector:
+    app: backend-api
+
+
+--- tp10/08-backend-config.yaml ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: taskflow
+data:
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: taskflow_db
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  CACHE_TTL: "300"
+  LOG_LEVEL: "INFO"
+
+
+[2 fichier(s) omis (budget dépassé) : .claude/CONTEXT.md, .claude/AUTOMATION.md]
