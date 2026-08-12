@@ -23,6 +23,7 @@ from src.infrastructure.github.actions_client import (
     assembler_contexte_depot,
     assembler_extrait_jobs,
     est_fichier_manifeste,
+    extraire_references_images,
     extraire_texte_logs,
 )
 
@@ -36,10 +37,15 @@ _ACTION_NON_MATERIALISABLE = "CORRECTIF_NON_MATERIALISABLE"
 _WORKFLOW_AUTOFIX = "mirador-autofix.yml"
 
 # Budget de contexte dépôt envoyé au correcteur (fichiers de manifeste/config),
-# quand `depot.lecture_depot` est activé. Du même ordre que MAX_LOG_CHARS : assez
-# pour quelques manifestes complets, pas assez pour y noyer un modèle Haiku.
-MAX_CONTEXTE_DEPOT_CHARS = 12_000
-# Plafond du nombre de fichiers candidats lus (borne le nombre d'appels API).
+# quand `depot.lecture_depot` est activé. Calé sur le cas réel kubernetes-
+# formation#142 : les fichiers trouvés par recherche ciblée (cf. `_recuperer_
+# contexte_depot`) passent en premier dans `assembler_contexte_depot` et sont
+# prioritaires sur le budget, mais celui-ci doit rester assez large pour les
+# contenir ENTIERS (un des trois faisait à lui seul 16 Ko) plutôt que de les
+# voir omis en entier faute de place.
+MAX_CONTEXTE_DEPOT_CHARS = 30_000
+# Plafond du nombre de fichiers candidats lus (borne le nombre d'appels API) :
+# fichiers trouvés par recherche ciblée + repli par taille croissante.
 _MAX_FICHIERS_CONTEXTE = 40
 # Fichiers plus gros qu'un manifeste raisonnable : probablement pas un manifeste
 # utile, et un seul monopoliserait le budget — écarté avant même d'être lu.
@@ -179,7 +185,7 @@ class Traitement:
         contexte_depot = None
         if getattr(depot, "lecture_depot", False):
             contexte_depot = await self._recuperer_contexte_depot(
-                depot_nom, anomalie_branche(anomalie), depot.installation_id
+                depot_nom, anomalie_branche(anomalie), depot.installation_id, extrait_log
             )
         try:
             return await self._correcteur.proposer(anomalie, extrait_log, regle, contexte_depot)
@@ -189,15 +195,29 @@ class Traitement:
             return None
 
     async def _recuperer_contexte_depot(
-        self, depot_nom: str, branche: str, installation_id: int
+        self, depot_nom: str, branche: str, installation_id: int, extrait_log: str,
     ) -> Optional[str]:
         """Contenu des fichiers de manifeste/config du dépôt, pour que le
         correcteur puisse localiser une référence fautive et produire un
         correctif matérialisable au lieu de s'abstenir faute d'accès au dépôt.
 
-        Best-effort : une panne (arbre indisponible, fichier illisible) ne doit
-        jamais bloquer la détection ni l'escalade — même philosophie que
-        `_proposer` vis-à-vis d'une panne du correcteur lui-même.
+        Deux sources de candidats, dans cet ordre de PRIORITÉ (les premiers de
+        la liste passent en premier dans `assembler_contexte_depot`, donc
+        gagnent le budget en cas de conflit) :
+        1. Recherche ciblée (Code Search) sur les références d'image/dépendance
+           repérées dans le log — précis, quelques appels API seulement.
+        2. Repli par taille croissante sur l'arbre du dépôt, pour compléter s'il
+           reste de la place — utile quand le log ne cite aucune référence
+           exploitable, ou quand la recherche ne trouve rien.
+
+        Nécessaire sur un dépôt à centaines de petits manifestes (kubernetes-
+        formation#142 : 194 candidats, les 3 fichiers utiles classés 98e/150e/
+        190e par taille) — un simple tri par taille ne les atteint jamais.
+
+        Best-effort à chaque étape : une panne (arbre indisponible, recherche
+        indisponible, fichier illisible) ne doit jamais bloquer la détection ni
+        l'escalade — même philosophie que `_proposer` vis-à-vis d'une panne du
+        correcteur lui-même.
         """
         try:
             arbre = await self._actions.lister_fichiers(depot_nom, branche, installation_id)
@@ -205,10 +225,33 @@ class Traitement:
             log.warning("contexte_depot.arbre_indisponible", depot=depot_nom, err=str(exc))
             return None
 
-        candidats = [
-            f["path"] for f in arbre
-            if est_fichier_manifeste(f["path"]) and f.get("size", 0) <= _MAX_TAILLE_FICHIER_CONTEXTE
-        ][:_MAX_FICHIERS_CONTEXTE]
+        prioritaires: list[str] = []
+        for reference in extraire_references_images(extrait_log):
+            try:
+                trouves = await self._actions.chercher_code(depot_nom, reference, installation_id)
+            except Exception as exc:
+                log.warning("contexte_depot.recherche_echouee",
+                            depot=depot_nom, reference=reference, err=str(exc))
+                continue
+            for chemin in trouves:
+                if chemin not in prioritaires:
+                    prioritaires.append(chemin)
+        candidats = prioritaires[:_MAX_FICHIERS_CONTEXTE]
+
+        repli = sorted(
+            (
+                (f["path"], f.get("size", 0)) for f in arbre
+                if est_fichier_manifeste(f["path"])
+                and f.get("size", 0) <= _MAX_TAILLE_FICHIER_CONTEXTE
+            ),
+            key=lambda item: item[1],
+        )
+        for chemin, _taille in repli:
+            if len(candidats) >= _MAX_FICHIERS_CONTEXTE:
+                break
+            if chemin not in candidats:
+                candidats.append(chemin)
+
         if not candidats:
             return None
 

@@ -11,6 +11,7 @@ from src.infrastructure.github.actions_client import (
     assembler_contexte_depot,
     assembler_extrait_jobs,
     est_fichier_manifeste,
+    extraire_references_images,
     extraire_texte_logs,
 )
 
@@ -149,3 +150,44 @@ def test_budget_respecte_sans_troncature():
 
 def test_aucun_fichier():
     assert assembler_contexte_depot([], budget=1000) == ""
+
+
+# --- extraction des références d'image (ciblage de la recherche dépôt) -----
+
+
+def test_extrait_reference_namespace_repo_tag():
+    refs = extraire_references_images("Scan amazon/aws-cli:2.36.8 : CVE-2026-44605 (rpm) HIGH")
+    assert "amazon/aws-cli:2.36.8" in refs
+
+
+def test_extrait_reference_avec_tag_compose():
+    refs = extraire_references_images(
+        "telemachlearning/wordpress:6.8-php8.3-apache a des CVE non corrigées"
+    )
+    assert "telemachlearning/wordpress:6.8-php8.3-apache" in refs
+
+
+def test_extrait_reference_sans_namespace():
+    assert "postgres:18-alpine" in extraire_references_images("image: postgres:18-alpine")
+
+
+def test_ignore_les_horodatages():
+    # « 05:13:53 » ne doit pas être pris pour une image taguée « 13 » ou « 53 ».
+    refs = extraire_references_images("2026-08-10T05:13:53.7558443Z Trivy démarre")
+    assert not any(r.endswith(":13") or r.endswith(":53") for r in refs)
+
+
+def test_ignore_les_couples_cle_valeur_yaml():
+    # « clé: valeur » (espacé) n'est pas une référence d'image (non espacée).
+    assert extraire_references_images("shell: /usr/bin/bash\nFAIL_ON_SEVERITY: CRITICAL,HIGH") == []
+
+
+def test_ignore_les_urls():
+    assert extraire_references_images("https://avd.aquasec.com/nvd/cve-2026-44605") == []
+
+
+def test_deduplique_et_plafonne():
+    texte = " ".join(f"repo{i}/image{i}:1.{i}" for i in range(10))
+    refs = extraire_references_images(texte + " repo0/image0:1.0")  # doublon
+    assert len(refs) <= 5
+    assert len(refs) == len(set(refs))

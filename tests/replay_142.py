@@ -14,18 +14,19 @@ activé en prod pour kubernetes-formation. Ce script rejoue l'anomalie avec les
 DEUX extraits réels que Mirador recevrait aujourd'hui : le log assemblé par
 `assembler_extrait_jobs` (fixture `run-31357877181-jobs-en-echec.txt`, produite
 à partir des logs authentiques des 3 jobs en échec) et le contexte dépôt
-assemblé par `assembler_contexte_depot` à partir de l'arbre réel du dépôt,
-40 fichiers de manifeste candidats, budget 12 000 caractères — EXACTEMENT ce
-que produirait `Traitement._recuperer_contexte_depot` en prod.
+assemblé par `assembler_contexte_depot` — EXACTEMENT ce que produirait
+`Traitement._recuperer_contexte_depot` en prod.
 
-Point d'attention découvert en préparant ce replay : avec la sélection par
-ordre d'arbre et ce budget, les 3 fichiers qui référencent réellement les
-images fautives (`docker/hardened/wordpress/Dockerfile`,
-`tp02/exercice10/wordpress-app.yaml`, `tp03/14-network-storage-examples-secure.yaml`)
-sont évincés par des fichiers plus gros mais non pertinents rencontrés avant
-dans l'arbre (workflows CI, templates). Le contexte fourni ici est donc fidèle
-à la prod, mais ne contient PAS la référence — ce replay vérifie que Mirador le
-reconnaît honnêtement plutôt que de deviner un chemin de fichier.
+Un premier passage (budget 12 000, sélection par ordre d'arbre) évinçait les
+fichiers pertinents : kubernetes-formation a 194 fichiers de manifeste, et les
+3 qui référencent réellement les images fautives se classaient 98e/150e/190e
+par taille. Mirador s'abstenait honnêtement (pas d'hallucination) mais sans
+matérialiser de correctif. Le correcteur cible désormais la recherche (Code
+Search sur les références d'image repérées dans le log) avant de compléter par
+taille croissante — cf. `Traitement._recuperer_contexte_depot`. La fixture de
+contexte dépôt ci-dessous reflète ce nouvel algorithme : `tp02/exercice10/
+wordpress-app.yaml` et `tp03/14-network-storage-examples-secure.yaml`, les deux
+fichiers qui référencent effectivement les images en cause, y sont présents.
 
 Usage (nécessite ANTHROPIC_API_KEY — donc via le workflow `replay-142.yml`) :
     python -m tests.replay_142

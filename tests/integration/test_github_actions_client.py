@@ -244,3 +244,27 @@ class TestLectureDepot:
             return_value=httpx.Response(404, json={"message": "Not Found"})
         )
         assert await client.lire_fichier(DEPOT, "inexistant.yaml", "main", INSTALLATION_ID) is None
+
+    @respx.mock
+    async def test_chercher_code_retourne_les_chemins(self, client):
+        route = respx.get(f"{BASE_URL}/search/code").mock(
+            return_value=httpx.Response(200, json={
+                "items": [
+                    {"path": "tp03/14-network-storage-examples-secure.yaml"},
+                    {"path": "docker/hardened/wordpress/Dockerfile"},
+                ],
+            })
+        )
+        resultats = await client.chercher_code(DEPOT, "amazon/aws-cli:2.36.8", INSTALLATION_ID)
+        assert resultats == [
+            "tp03/14-network-storage-examples-secure.yaml",
+            "docker/hardened/wordpress/Dockerfile",
+        ]
+        assert route.calls.last.request.url.params["q"] == f"amazon/aws-cli:2.36.8 repo:{DEPOT}"
+
+    @respx.mock
+    async def test_chercher_code_sans_resultat(self, client):
+        respx.get(f"{BASE_URL}/search/code").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert await client.chercher_code(DEPOT, "introuvable:1.0", INSTALLATION_ID) == []
