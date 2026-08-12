@@ -32,12 +32,13 @@ DEPOT = "aboigues/k8t"
 INSTALLATION_ID = 98765
 
 
-def _depot(regles_ids=None) -> DepotSurveille:
+def _depot(regles_ids=None, lecture_depot=False) -> DepotSurveille:
     return DepotSurveille(
         identifiant_github=DEPOT,
         installation_id=INSTALLATION_ID,
         responsables=[RESPONSABLE],
         regles_ids=regles_ids or [],
+        lecture_depot=lecture_depot,
     )
 
 
@@ -83,10 +84,12 @@ class _CorrecteurFake:
         self._proposition = proposition
         self.appels = 0
         self.dernier_extrait: str | None = None
+        self.dernier_contexte_depot: str | None = None
 
-    async def proposer(self, anomalie, extrait_log, regle=None):
+    async def proposer(self, anomalie, extrait_log, regle=None, contexte_depot=None):
         self.appels += 1
         self.dernier_extrait = extrait_log
+        self.dernier_contexte_depot = contexte_depot
         return self._proposition
 
 
@@ -96,13 +99,16 @@ class _CorrecteurEnPanne:
     def __init__(self, erreur: Exception | None = None):
         self._erreur = erreur or RuntimeError("credit balance is too low")
 
-    async def proposer(self, anomalie, extrait_log, regle=None):
+    async def proposer(self, anomalie, extrait_log, regle=None, contexte_depot=None):
         raise self._erreur
 
 
 class _ActionsFake:
-    def __init__(self, logs: bytes = b"aucun pattern"):
+    def __init__(self, logs: bytes = b"aucun pattern", arbre: list | None = None,
+                 contenus: dict | None = None):
         self._logs = logs
+        self._arbre = arbre or []
+        self._contenus = contenus or {}
         self.relances: list = []
         self.prs: list = []
         self.issues_ouvertes: list = []
@@ -111,9 +117,19 @@ class _ActionsFake:
         self.branches: list = []
         self.fichiers: list = []
         self.workflows: list = []
+        self.appels_lister_fichiers: list = []
+        self.appels_lire_fichier: list = []
 
     async def telecharger_logs(self, depot, run_id, installation_id) -> bytes:
         return self._logs
+
+    async def lister_fichiers(self, depot, ref, installation_id) -> list[dict]:
+        self.appels_lister_fichiers.append((depot, ref))
+        return self._arbre
+
+    async def lire_fichier(self, depot, chemin, ref, installation_id):
+        self.appels_lire_fichier.append(chemin)
+        return self._contenus.get(chemin)
 
     async def declencher_workflow(self, depot, fichier_workflow, ref, inputs, installation_id) -> None:
         self.workflows.append({"fichier": fichier_workflow, "ref": ref, "inputs": inputs})
@@ -185,8 +201,8 @@ class _WriterFake:
 
 
 def _traitement(actions, writer, correcteur, regles=None, deja_traite=None,
-                lire_proposition=None):
-    depot = _depot(regles_ids=[r.id for r in (regles or [])])
+                lire_proposition=None, lecture_depot=False):
+    depot = _depot(regles_ids=[r.id for r in (regles or [])], lecture_depot=lecture_depot)
 
     def resoudre(nom_depot):
         if nom_depot != DEPOT:
@@ -274,6 +290,62 @@ class TestInterventionAuto:
         await traitement.traiter(_message_workflow())
         assert actions.prs == [] and actions.branches == [] and actions.relances == []
         assert len(actions.issues_ouvertes) == 1
+
+
+class TestContexteDepot:
+    """`depot.lecture_depot` : accès en lecture au dépôt pour le correcteur.
+
+    Opt-in — cf. kubernetes-formation#142 : le correcteur voyait la CVE et la
+    version corrigée dans le log, mais s'abstenait faute de savoir dans quel
+    fichier du dépôt l'image était référencée.
+    """
+
+    async def test_lecture_desactivee_ne_consulte_pas_le_depot(self):
+        # Défaut : aucun appel API supplémentaire, aucun changement de comportement
+        # pour les dépôts qui n'ont pas activé la fonctionnalité.
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        traitement = _traitement(actions, writer, correcteur)
+        await traitement.traiter(_message_workflow())
+        assert actions.appels_lister_fichiers == []
+        assert actions.appels_lire_fichier == []
+        assert correcteur.dernier_contexte_depot is None
+
+    async def test_lecture_activee_transmet_le_contexte_et_materialise_le_correctif(self):
+        actions = _ActionsFake(
+            arbre=[
+                {"path": "tp08/compose.yaml", "size": 200},
+                {"path": "README.md", "size": 50},  # pas un manifeste : filtré
+            ],
+            contenus={"tp08/compose.yaml": "image: postgres:18-alpine\n"},
+        )
+        writer = _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(
+            type=TypeCorrection.PULL_REQUEST, justification="image stagnante",
+            titre_pr="fix: postgres", corps_pr="corps",
+            fichiers=[{"chemin": "tp08/compose.yaml", "contenu": "image: postgres:18\n"}],
+        ))
+        traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
+        await traitement.traiter(_message_workflow())
+        assert actions.appels_lister_fichiers == [(DEPOT, "main")]
+        assert actions.appels_lire_fichier == ["tp08/compose.yaml"]
+        assert "tp08/compose.yaml" in correcteur.dernier_contexte_depot
+        assert "postgres:18-alpine" in correcteur.dernier_contexte_depot
+        # Le correctif se matérialise ensuite normalement (chemin inchangé).
+        assert len(actions.prs) == 1
+        assert actions.fichiers[0]["chemin"] == "tp08/compose.yaml"
+
+    async def test_panne_de_lecture_depot_n_empeche_pas_le_traitement(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+
+        async def _boom(depot, ref, installation_id):
+            raise RuntimeError("API indisponible")
+        actions.lister_fichiers = _boom
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
+        await traitement.traiter(_message_workflow())
+        assert actions.relances == [(DEPOT, 12345678)]
+        assert correcteur.dernier_contexte_depot is None
 
 
 class TestDeduplicationDeliveryId:

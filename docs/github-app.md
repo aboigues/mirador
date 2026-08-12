@@ -107,6 +107,11 @@ Une entrée par dépôt :
 
 - `responsables` : logins GitHub autorisés à `/approuver` et `/rejeter`.
 - `regles` : optionnel ; une cause connue (règle qui matche) → relance auto en LOW.
+- `lecture_depot` : optionnel, défaut `false`. Autorise le correcteur à lire les
+  manifestes/Dockerfiles du dépôt (recherche de la référence fautive) pour
+  produire un correctif matérialisable au lieu de s'abstenir faute d'accès au
+  dépôt. Coût en appels API et en tokens à chaque anomalie — à activer dépôt
+  par dépôt après avoir constaté une abstention évitable, pas par défaut.
 
 ---
 

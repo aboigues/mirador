@@ -38,6 +38,15 @@ _MARQUEUR_ERREUR = "##[error]"
 # sans valeur pour le diagnostic — le retirer rend ~25 % du budget au contexte.
 _HORODATAGE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ", re.MULTILINE)
 
+# Fichiers susceptibles de référencer une image/dépendance : manifestes YAML
+# (Kubernetes, Compose, workflows...) et Dockerfiles, où qu'ils soient dans
+# l'arbre. Volontairement large : le tri fin (est-ce le bon fichier ?) revient
+# au correcteur, qui voit le contenu ; ce filtre n'écarte que le bruit évident
+# (code source, docs, images binaires...).
+_PATTERN_MANIFESTE = re.compile(
+    r"(^|/)(Dockerfile|Containerfile)([.\-][\w.\-]*)?$|\.ya?ml$", re.IGNORECASE
+)
+
 
 def _fenetre_utile(texte: str, taille: int) -> str:
     """Extrait `taille` caractères de `texte`, centrés sur ce qui a échoué.
@@ -112,6 +121,37 @@ def assembler_extrait_jobs(jobs: list[tuple[str, str]], budget: int) -> str:
             corps = texte
         morceaux.append(entete + corps)
     return entete_globale + "\n".join(morceaux)
+
+
+def est_fichier_manifeste(chemin: str) -> bool:
+    """Un fichier de manifeste/config (YAML, Dockerfile) susceptible de référencer
+    une image ou une dépendance — candidat pour le contexte dépôt du correcteur."""
+    return bool(_PATTERN_MANIFESTE.search(chemin))
+
+
+def assembler_contexte_depot(fichiers: list[tuple[str, str]], budget: int) -> str:
+    """Assemble des fichiers du dépôt dans un budget de caractères.
+
+    Contrairement à `assembler_extrait_jobs`, ne tronque JAMAIS un fichier :
+    `fichiers[].contenu` (PropositionCorrection) doit être le contenu COMPLET
+    après correction — un fichier coupé ici pourrait être repris par le modèle
+    comme s'il était entier, et corrompre le vrai fichier une fois poussé sur
+    la branche de correctif. Un fichier qui ne tient pas dans le budget restant
+    est omis en entier, jamais partiellement inclus.
+    """
+    morceaux = []
+    restant = budget
+    omis: list[str] = []
+    for chemin, contenu in fichiers:
+        bloc = f"--- {chemin} ---\n{contenu}\n"
+        if len(bloc) > restant:
+            omis.append(chemin)
+            continue
+        morceaux.append(bloc)
+        restant -= len(bloc)
+    if omis:
+        morceaux.append(f"[{len(omis)} fichier(s) omis (budget dépassé) : {', '.join(omis)}]")
+    return "\n".join(morceaux)
 
 
 class FournisseurToken(Protocol):
@@ -331,3 +371,47 @@ class GitHubActionsClient:
             "PUT", f"/repos/{depot}/contents/{chemin}", installation_id, json=corps
         )
         log.info("github.fichier_ecrit", depot=depot, chemin=chemin, branche=branche)
+
+    # --- Lecture du dépôt (contexte pour le correcteur) ------------------
+
+    async def lister_fichiers(
+        self, depot: str, ref: str, installation_id: int
+    ) -> list[dict[str, Any]]:
+        """Chemins et tailles de tous les fichiers du dépôt à `ref` (un seul appel).
+
+        `ref` accepte un nom de branche (l'API le résout). Ne remonte que les
+        blobs (fichiers) : les entrées `tree` (dossiers) sont écartées.
+        """
+        reponse = await self._requete(
+            "GET", f"/repos/{depot}/git/trees/{ref}?recursive=1", installation_id
+        )
+        donnees = reponse.json()
+        if donnees.get("truncated"):
+            log.warning("github.arbre_tronque", depot=depot, ref=ref)
+        return [
+            {"path": item["path"], "size": item.get("size", 0)}
+            for item in donnees.get("tree", [])
+            if item.get("type") == "blob"
+        ]
+
+    async def lire_fichier(
+        self, depot: str, chemin: str, ref: str, installation_id: int
+    ) -> Optional[str]:
+        """Contenu texte d'un fichier à `ref`, ou None s'il est absent/binaire.
+
+        Best-effort par construction : un fichier illisible ne doit jamais faire
+        échouer la collecte de contexte pour les autres fichiers candidats.
+        """
+        try:
+            reponse = await self._requete(
+                "GET", f"/repos/{depot}/contents/{chemin}?ref={ref}", installation_id
+            )
+        except httpx.HTTPStatusError:
+            return None
+        donnees = reponse.json()
+        if donnees.get("encoding") != "base64":
+            return None
+        try:
+            return base64.b64decode(donnees["content"]).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None  # fichier binaire

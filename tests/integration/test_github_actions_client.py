@@ -207,3 +207,40 @@ class TestMaterialisationCorrectif:
         )
         import json
         assert json.loads(route.calls.last.request.content)["sha"] == "old-sha"
+
+
+class TestLectureDepot:
+    @respx.mock
+    async def test_lister_fichiers_ne_garde_que_les_blobs(self, client):
+        respx.get(_url("/git/trees/main?recursive=1")).mock(
+            return_value=httpx.Response(200, json={
+                "tree": [
+                    {"path": "tp08", "type": "tree", "sha": "d1"},
+                    {"path": "tp08/compose.yaml", "type": "blob", "sha": "b1", "size": 512},
+                    {"path": "README.md", "type": "blob", "sha": "b2", "size": 100},
+                ],
+                "truncated": False,
+            })
+        )
+        fichiers = await client.lister_fichiers(DEPOT, "main", INSTALLATION_ID)
+        assert fichiers == [
+            {"path": "tp08/compose.yaml", "size": 512},
+            {"path": "README.md", "size": 100},
+        ]
+
+    @respx.mock
+    async def test_lire_fichier_decode_le_base64(self, client):
+        import base64
+        contenu = base64.b64encode("image: postgres:18-alpine\n".encode()).decode()
+        respx.get(_url("/contents/tp08/compose.yaml?ref=main")).mock(
+            return_value=httpx.Response(200, json={"encoding": "base64", "content": contenu})
+        )
+        resultat = await client.lire_fichier(DEPOT, "tp08/compose.yaml", "main", INSTALLATION_ID)
+        assert resultat == "image: postgres:18-alpine\n"
+
+    @respx.mock
+    async def test_lire_fichier_absent_retourne_none(self, client):
+        respx.get(_url("/contents/inexistant.yaml?ref=main")).mock(
+            return_value=httpx.Response(404, json={"message": "Not Found"})
+        )
+        assert await client.lire_fichier(DEPOT, "inexistant.yaml", "main", INSTALLATION_ID) is None

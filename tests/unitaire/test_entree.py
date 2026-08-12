@@ -106,7 +106,7 @@ class _WriterFake:
 
 
 class _CorrecteurFake:
-    async def proposer(self, anomalie, extrait_log, regle=None):
+    async def proposer(self, anomalie, extrait_log, regle=None, contexte_depot=None):
         from src.agents.correcteur import PropositionCorrection, TypeCorrection
         return PropositionCorrection(type=TypeCorrection.RELANCE, justification="x")
 
