@@ -1,0 +1,39 @@
+name: Replay anomalie #142
+
+# Rejoue une anomalie réelle contre le vrai modèle Claude, avec le log ET le
+# contexte dépôt authentiques (kubernetes-formation#142 : CVE réelles visibles
+# dans le log, mais Mirador s'était abstenu faute d'accès au dépôt — cf.
+# mirador#25, qui ajoute cet accès en lecture opt-in).
+#
+# Manuel, et pas dans la CI de chaque push : l'appel au modèle est payant et son
+# verdict n'est pas strictement déterministe. À relancer quand on touche au
+# prompt du correcteur, au modèle, ou à la sélection du contexte dépôt.
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  replay:
+    name: Replay #142 (appel Claude réel)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer uv
+        run: pip install uv
+
+      - name: Installer les dépendances
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Rejouer l'anomalie #142
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m tests.replay_142
