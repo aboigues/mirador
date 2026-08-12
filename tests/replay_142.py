@@ -49,6 +49,10 @@ _FIXTURE_CONTEXTE = (
     pathlib.Path(__file__).parent / "fixtures" / "kubernetes-formation-contexte-depot.txt"
 )
 
+# Espace de largeur nulle (U+200B), inséré dans `_pour_affichage` pour désamorcer
+# un token de commande GitHub Actions sans changer visuellement le texte affiché.
+_ESPACE_LARGEUR_NULLE = "​"
+
 
 def _anomalie() -> Anomalie:
     return Anomalie(
@@ -60,6 +64,18 @@ def _anomalie() -> Anomalie:
     )
 
 
+def _pour_affichage(texte: str) -> str:
+    """Désamorce les tokens de commande GitHub Actions (`##[error]`, `##[group]`...).
+
+    Si le modèle cite un extrait de log contenant l'un de ces tokens en début de
+    ligne (après un retour à la ligne dans son texte), le runner l'interprète
+    comme une VRAIE commande et absorbe tout ce qui suit dans une annotation —
+    le reste du texte n'apparaît alors nulle part dans `gh run view --log`.
+    Concerne uniquement l'affichage : ne change rien au verdict évalué plus bas.
+    """
+    return texte.replace("##[", "##" + _ESPACE_LARGEUR_NULLE + "[")
+
+
 async def principal() -> int:
     extrait = _FIXTURE_LOG.read_text(encoding="utf-8")
     contexte_depot = _FIXTURE_CONTEXTE.read_text(encoding="utf-8")
@@ -69,7 +85,7 @@ async def principal() -> int:
     )
 
     print(f"Type          : {proposition.type}")
-    print(f"Justification : {proposition.justification}\n")
+    print(f"Justification : {_pour_affichage(proposition.justification)}\n")
     if proposition.titre_pr:
         print(f"Titre PR      : {proposition.titre_pr}")
     if proposition.fichiers:
