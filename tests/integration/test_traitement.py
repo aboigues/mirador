@@ -245,17 +245,35 @@ class TestInterventionAuto:
         await traitement.traiter(_message_workflow())
         assert actions.relances == [(DEPOT, 12345678)]
 
-    async def test_low_pull_request(self):
+    async def test_low_pull_request_avec_fichiers_materialise_la_branche(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(
+            type=TypeCorrection.PULL_REQUEST, justification="dep obsolète",
+            titre_pr="fix: dep", corps_pr="corps",
+            fichiers=[{"chemin": "go.mod", "contenu": "module k8t\ngo 1.25.12\n"}],
+        ))
+        # échec sur branche feature sans règle → LOW → intervention auto
+        traitement = _traitement(actions, writer, correcteur)
+        await traitement.traiter(_message_workflow())
+        assert actions.branches == [("mirador/fix-12345678", "base-sha")]
+        assert actions.fichiers[0]["chemin"] == "go.mod"
+        assert len(actions.prs) == 1
+        assert actions.relances == []
+
+    async def test_low_pull_request_sans_fichiers_escalade_au_lieu_de_pr_vide(self):
+        # Régression : Mirador ouvrait une PR sans aucun correctif matérialisé
+        # (ni branche, ni fichier) quand le correcteur ne fournissait pas
+        # `fichiers`. Une PR sans diff coûte plus de temps de revue qu'elle n'en
+        # fait gagner — on escalade désormais vers un humain, comme l'ABSTENTION.
         actions, writer = _ActionsFake(), _WriterFake()
         correcteur = _CorrecteurFake(PropositionCorrection(
             type=TypeCorrection.PULL_REQUEST, justification="dep obsolète",
             titre_pr="fix: dep", corps_pr="corps", correctif="diff",
         ))
-        # échec sur branche feature sans règle → LOW → intervention auto
         traitement = _traitement(actions, writer, correcteur)
         await traitement.traiter(_message_workflow())
-        assert len(actions.prs) == 1
-        assert actions.relances == []
+        assert actions.prs == [] and actions.branches == [] and actions.relances == []
+        assert len(actions.issues_ouvertes) == 1
 
 
 class TestDeduplicationDeliveryId:
@@ -432,7 +450,10 @@ class TestExecutionSurApprobation:
         assert "construction" in actions.commentaires[0]["corps"].lower()
         assert actions.fermetures[0]["label"] == "resolved"
 
-    async def test_approuver_pr_sans_fichiers_ecrit_document(self):
+    async def test_approuver_pr_sans_fichiers_ne_cree_rien(self):
+        # Régression : Mirador ouvrait une PR documentaire (MIRADOR-FIX.md) sans
+        # aucun vrai correctif quand la proposition n'avait pas de `fichiers`.
+        # Sans matérialisation possible, on n'ouvre plus de PR du tout.
         actions, writer = _ActionsFake(), _WriterFake()
         correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
         details = {"proposition": {"type": TypeCorrection.PULL_REQUEST, "justification": "j",
@@ -440,10 +461,9 @@ class TestExecutionSurApprobation:
                    "workflow_run_id": 555, "head_branch": "main"}
         traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
         await traitement.traiter(_message_validation(commande="approuver"))
-        assert actions.branches == [("mirador/fix-555", "base-sha")]
-        assert actions.fichiers[0]["chemin"] == "MIRADOR-FIX.md"
-        assert "diff" in actions.fichiers[0]["contenu"]
-        assert len(actions.prs) == 1
+        assert actions.branches == [] and actions.fichiers == [] and actions.prs == []
+        assert "manuel" in actions.commentaires[0]["corps"].lower()
+        assert actions.fermetures[0]["label"] == "resolved"
 
     async def test_approuver_sans_proposition_ferme_sans_action(self):
         actions, writer = _ActionsFake(), _WriterFake()
@@ -463,7 +483,8 @@ class TestExecutionSurApprobation:
         actions.creer_pull_request = _boom
         correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
         details = {"proposition": {"type": TypeCorrection.PULL_REQUEST, "justification": "j",
-                                   "titre_pr": "t", "corps_pr": "c"},
+                                   "titre_pr": "t", "corps_pr": "c",
+                                   "fichiers": [{"chemin": "x.txt", "contenu": "y"}]},
                    "workflow_run_id": 555, "head_branch": "main"}
         traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
         await traitement.traiter(_message_validation(commande="approuver"))

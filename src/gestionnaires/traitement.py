@@ -30,6 +30,7 @@ _ACTEUR_AGENT = "mirador-agent"
 _ACTION_ECHEC = "ÉCHEC_EXÉCUTION"
 _ACTION_PR_CONSTRUCTION = "PR_EN_CONSTRUCTION"
 _ACTION_ABSTENTION = "ABSTENTION"
+_ACTION_NON_MATERIALISABLE = "CORRECTIF_NON_MATERIALISABLE"
 _WORKFLOW_AUTOFIX = "mirador-autofix.yml"
 
 # Sentinelle : distingue « proposition non encore calculée » de « proposition
@@ -191,17 +192,28 @@ class Traitement:
                 proposition=proposition,
             )
             return
+        if (
+            proposition.type == TypeCorrection.PULL_REQUEST
+            and not proposition.fichiers
+            and not proposition.mise_a_jour
+        ):
+            # Correctif non matérialisable (ni fichiers, ni mise à jour de deps) :
+            # une PR sans diff coûte plus de temps de revue qu'elle n'en fait
+            # gagner — même principe que l'ABSTENTION (cf. `_SYSTEME` dans
+            # correcteur.py). On escalade plutôt que d'ouvrir une PR vide.
+            log.info("intervention.pr_non_materialisable", anomalie_id=str(anomalie.id))
+            await self._escalader(
+                anomalie, depot, depot_nom, extrait_log, regles,
+                proposition=proposition,
+            )
+            return
         anomalie.demarrer_traitement()
 
         if proposition.type == TypeCorrection.PULL_REQUEST:
-            await self._actions.creer_pull_request(
-                depot_nom, depot.installation_id,
-                titre=proposition.titre_pr or "fix: correctif Mirador",
-                corps=proposition.corps_pr or proposition.justification,
-                branche_source=f"mirador/fix-{anomalie.workflow_run_id}",
-                branche_cible=anomalie_branche(anomalie),
+            action = await self._ouvrir_pull_request_correctif(
+                proposition.model_dump(), depot, depot_nom,
+                anomalie.workflow_run_id, anomalie_branche(anomalie),
             )
-            action = "PULL_REQUEST"
         else:
             await self._actions.relancer_workflow(
                 depot_nom, anomalie.workflow_run_id, depot.installation_id
@@ -322,11 +334,15 @@ class Traitement:
     ) -> str:
         """Matérialise le correctif et retourne le type d'action réalisé.
 
-        Trois voies, par ordre de préférence :
+        Deux voies, par ordre de préférence :
         1. `mise_a_jour` (deps Go) → délègue à un workflow de build réel qui
            régénère go.mod/go.sum et ouvre la PR (→ correctif qui passe la CI).
         2. `fichiers` fournis → crée la branche, écrit les fichiers, ouvre la PR.
-        3. sinon → PR documentaire (MIRADOR-FIX.md) à compléter par un humain.
+
+        Sans l'une ou l'autre, il n'y a rien à matérialiser : retourne
+        `_ACTION_NON_MATERIALISABLE` sans toucher au dépôt. Une PR sans diff
+        (l'ancien repli MIRADOR-FIX.md) coûte plus de temps de revue qu'elle
+        n'en fait gagner — même principe que l'ABSTENTION.
         """
         inst = depot.installation_id
         branche = f"mirador/fix-{run_id}"
@@ -348,19 +364,15 @@ class Traitement:
             )
             return _ACTION_PR_CONSTRUCTION
 
+        fichiers = proposition.get("fichiers") or []
+        if not fichiers:
+            return _ACTION_NON_MATERIALISABLE
+
         sha_base = await self._actions.obtenir_sha_tete(depot_nom, branche_cible, inst)
         await self._actions.creer_branche(depot_nom, branche, sha_base, inst)
-
-        fichiers = proposition.get("fichiers") or []
-        if fichiers:
-            for fichier in fichiers:
-                await self._actions.televerser_fichier(
-                    depot_nom, fichier["chemin"], fichier["contenu"], branche, titre, inst
-                )
-        else:
+        for fichier in fichiers:
             await self._actions.televerser_fichier(
-                depot_nom, "MIRADOR-FIX.md",
-                _document_correctif(proposition), branche, titre, inst,
+                depot_nom, fichier["chemin"], fichier["contenu"], branche, titre, inst
             )
 
         await self._actions.creer_pull_request(
@@ -411,21 +423,6 @@ class Traitement:
         )])
 
 
-def _document_correctif(proposition: dict[str, Any]) -> str:
-    """Contenu du fichier de repli quand la proposition n'a pas de fichiers exploitables."""
-    parties = [
-        "# Correctif proposé par Mirador",
-        "",
-        proposition.get("corps_pr") or proposition.get("justification") or "",
-    ]
-    correctif = proposition.get("correctif")
-    if correctif:
-        parties += ["", "## Détail du correctif", "", "```", correctif, "```"]
-    parties += ["", "> Correctif à compléter/appliquer par un responsable "
-                "(Mirador n'a pas pu le matérialiser automatiquement)."]
-    return "\n".join(parties) + "\n"
-
-
 def _message_approbation(acteur: str, action: Optional[str]) -> str:
     if action == TypeCorrection.RELANCE:
         return f"✅ Approuvé par @{acteur} — workflow relancé par Mirador."
@@ -437,6 +434,11 @@ def _message_approbation(acteur: str, action: Optional[str]) -> str:
     if action == _ACTION_ABSTENTION:
         return (f"✅ Approuvé par @{acteur} — Mirador n'ayant identifié aucune cause, "
                 f"aucune action automatique n'a été déclenchée.")
+    if action == _ACTION_NON_MATERIALISABLE:
+        return (f"✅ Approuvé par @{acteur} — Mirador n'a pas pu matérialiser de "
+                f"correctif de code automatiquement ; aucune PR n'a été ouverte. "
+                f"Appliquez le correctif manuellement d'après la description "
+                f"ci-dessus.")
     if action == _ACTION_ECHEC:
         return (f"✅ Approuvé par @{acteur} — l'exécution automatique de la proposition "
                 f"a échoué ; le correctif est à appliquer manuellement (voir les logs).")
