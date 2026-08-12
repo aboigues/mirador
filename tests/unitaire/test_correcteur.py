@@ -130,6 +130,24 @@ class TestAnalyseViaClaude:
         await Correcteur(client).proposer(_anomalie(), extrait_log="x", regle=None)
         assert client.messages.appels[0]["model"] == "claude-haiku-4-5"
 
+    async def test_contexte_depot_transmis_quand_fourni(self):
+        client = _ClientFake(_reponse_json(type="ABSTENTION", justification="x"))
+        correcteur = Correcteur(client, modele=MODELE)
+        await correcteur.proposer(
+            _anomalie(), extrait_log="trace", regle=None,
+            contexte_depot="--- tp08/compose.yaml ---\nimage: postgres:18-alpine\n",
+        )
+        envoye = json.dumps(client.messages.appels[0]["messages"], ensure_ascii=False)
+        assert "tp08/compose.yaml" in envoye
+        assert "postgres:18-alpine" in envoye
+
+    async def test_pas_de_contexte_depot_par_defaut(self):
+        client = _ClientFake(_reponse_json(type="ABSTENTION", justification="x"))
+        correcteur = Correcteur(client, modele=MODELE)
+        await correcteur.proposer(_anomalie(), extrait_log="trace", regle=None)
+        envoye = json.dumps(client.messages.appels[0]["messages"], ensure_ascii=False)
+        assert "Extrait du dépôt" not in envoye
+
     async def test_log_volumineux_est_tronque(self):
         # Un log de plusieurs centaines de Ko ne doit pas être envoyé en entier.
         client = _ClientFake(_reponse_json(type="RELANCE", justification="x"))

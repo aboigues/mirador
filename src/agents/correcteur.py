@@ -130,7 +130,18 @@ _SYSTEME = (
     "contenu COMPLET après correction (chemin + contenu), pour que la PR soit ouverte "
     "automatiquement. N'inclus dans `fichiers` que des fichiers que tu peux produire "
     "intégralement et correctement ; sinon laisse `fichiers` vide et décris le "
-    "correctif dans le corps. Pour un correctif de DÉPENDANCES Go (mise à jour du "
+    "correctif dans le corps.\n\n"
+    "Si un extrait du dépôt (fichiers de manifeste/configuration) est fourni "
+    "après le log, cherches-y la référence exacte à l'image ou la dépendance en "
+    "cause. Si tu la trouves dans un fichier fourni, mets ce fichier dans "
+    "`fichiers` avec son contenu ENTIER, à l'identique, en ne changeant que la "
+    "référence fautive — jamais un extrait partiel : ce contenu écrase le fichier "
+    "réel tel quel. Si l'image/dépendance n'apparaît dans AUCUN fichier fourni, ne "
+    "conclus PAS qu'elle est absente du dépôt : l'extrait est volontairement "
+    "partiel (budget limité), pas le dépôt entier. Dis-le explicitement dans "
+    "`justification` et pars sur ABSTENTION plutôt que de deviner un chemin de "
+    "fichier.\n\n"
+    "Pour un correctif de DÉPENDANCES Go (mise à jour du "
     "toolchain et/ou de modules), n'édite PAS go.mod/go.sum toi-même (go.sum n'est "
     "pas calculable sans build) : renseigne plutôt `mise_a_jour` (go_version cible "
     "et/ou modules « chemin@version »), et Mirador régénérera go.mod/go.sum via un "
@@ -148,8 +159,16 @@ class Correcteur:
         anomalie: Anomalie,
         extrait_log: str,
         regle: Optional[RegleDiagnostic] = None,
+        contexte_depot: Optional[str] = None,
     ) -> PropositionCorrection:
-        """Retourne une proposition de correction pour l'anomalie."""
+        """Retourne une proposition de correction pour l'anomalie.
+
+        `contexte_depot` : extrait optionnel de fichiers du dépôt surveillé
+        (manifestes, Dockerfiles...), déjà budgeté par l'appelant — voir
+        `assembler_contexte_depot`. Permet au correcteur de localiser une
+        référence fautive et de produire un correctif matérialisable au lieu
+        de s'abstenir faute d'accès au dépôt.
+        """
         if regle is not None and regle.action_recommandee == ActionRecommandee.RELANCE:
             log.info("correcteur.relance_deterministe",
                      anomalie_id=str(anomalie.id), regle=regle.nom)
@@ -158,10 +177,10 @@ class Correcteur:
                 justification=f"Cause connue (règle '{regle.nom}') : relance recommandée.",
             )
 
-        return await self._analyser_via_claude(anomalie, extrait_log)
+        return await self._analyser_via_claude(anomalie, extrait_log, contexte_depot)
 
     async def _analyser_via_claude(
-        self, anomalie: Anomalie, extrait_log: str
+        self, anomalie: Anomalie, extrait_log: str, contexte_depot: Optional[str] = None
     ) -> PropositionCorrection:
         log_tronque = extrait_log[-MAX_LOG_CHARS:] if extrait_log else ""
         if extrait_log and len(extrait_log) > MAX_LOG_CHARS:
@@ -170,6 +189,16 @@ class Correcteur:
             f"Workflow « {anomalie.workflow_nom} » (run {anomalie.workflow_run_id}) "
             f"de type {anomalie.type}.\n\nExtrait de log :\n{log_tronque}"
         )
+        if contexte_depot:
+            # Non retronqué ici : la troncature dangereuse (couper un fichier en
+            # cours de route) a déjà été évitée en amont par
+            # `assembler_contexte_depot`, qui n'inclut jamais un fichier partiel.
+            invite += (
+                "\n\nExtrait du dépôt (fichiers de manifeste/configuration "
+                "susceptibles de référencer l'image ou la dépendance en cause ; "
+                "liste PARTIELLE, pas nécessairement exhaustive) :\n\n"
+                + contexte_depot
+            )
         # Ni `thinking` ni `output_config.effort` : coûteux en tokens, non nécessaires
         # pour cette classification, et surtout incompatibles avec Haiku 4.5 (erreur).
         # La sortie structurée (json_schema) suffit et marche sur tous les modèles.

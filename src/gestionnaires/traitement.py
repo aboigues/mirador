@@ -20,7 +20,9 @@ from src.domaine.anomalie import Anomalie
 from src.domaine.journal import EvenementJournal, TypeEvenement
 from src.domaine.regle import RegleDiagnostic
 from src.infrastructure.github.actions_client import (
+    assembler_contexte_depot,
     assembler_extrait_jobs,
+    est_fichier_manifeste,
     extraire_texte_logs,
 )
 
@@ -32,6 +34,16 @@ _ACTION_PR_CONSTRUCTION = "PR_EN_CONSTRUCTION"
 _ACTION_ABSTENTION = "ABSTENTION"
 _ACTION_NON_MATERIALISABLE = "CORRECTIF_NON_MATERIALISABLE"
 _WORKFLOW_AUTOFIX = "mirador-autofix.yml"
+
+# Budget de contexte dépôt envoyé au correcteur (fichiers de manifeste/config),
+# quand `depot.lecture_depot` est activé. Du même ordre que MAX_LOG_CHARS : assez
+# pour quelques manifestes complets, pas assez pour y noyer un modèle Haiku.
+MAX_CONTEXTE_DEPOT_CHARS = 12_000
+# Plafond du nombre de fichiers candidats lus (borne le nombre d'appels API).
+_MAX_FICHIERS_CONTEXTE = 40
+# Fichiers plus gros qu'un manifeste raisonnable : probablement pas un manifeste
+# utile, et un seul monopoliserait le budget — écarté avant même d'être lu.
+_MAX_TAILLE_FICHIER_CONTEXTE = 20_000
 
 # Sentinelle : distingue « proposition non encore calculée » de « proposition
 # absente » (None = correcteur indisponible), qui sont deux cas différents.
@@ -152,7 +164,8 @@ class Traitement:
         return extraire_texte_logs(contenu_logs)
 
     async def _proposer(
-        self, anomalie: Anomalie, extrait_log: str, regles: list[RegleDiagnostic]
+        self, anomalie: Anomalie, extrait_log: str, regles: list[RegleDiagnostic],
+        depot: Any, depot_nom: str,
     ) -> Any:
         """Propose une correction, ou None si le correcteur est indisponible.
 
@@ -163,18 +176,64 @@ class Traitement:
         regle = next(
             (r for r in regles if r.id == anomalie.regle_declenchee_id), None
         )
+        contexte_depot = None
+        if getattr(depot, "lecture_depot", False):
+            contexte_depot = await self._recuperer_contexte_depot(
+                depot_nom, anomalie_branche(anomalie), depot.installation_id
+            )
         try:
-            return await self._correcteur.proposer(anomalie, extrait_log, regle)
+            return await self._correcteur.proposer(anomalie, extrait_log, regle, contexte_depot)
         except Exception as exc:
             log.warning("correcteur.indisponible",
                         anomalie_id=str(anomalie.id), err=str(exc))
             return None
 
+    async def _recuperer_contexte_depot(
+        self, depot_nom: str, branche: str, installation_id: int
+    ) -> Optional[str]:
+        """Contenu des fichiers de manifeste/config du dépôt, pour que le
+        correcteur puisse localiser une référence fautive et produire un
+        correctif matérialisable au lieu de s'abstenir faute d'accès au dépôt.
+
+        Best-effort : une panne (arbre indisponible, fichier illisible) ne doit
+        jamais bloquer la détection ni l'escalade — même philosophie que
+        `_proposer` vis-à-vis d'une panne du correcteur lui-même.
+        """
+        try:
+            arbre = await self._actions.lister_fichiers(depot_nom, branche, installation_id)
+        except Exception as exc:
+            log.warning("contexte_depot.arbre_indisponible", depot=depot_nom, err=str(exc))
+            return None
+
+        candidats = [
+            f["path"] for f in arbre
+            if est_fichier_manifeste(f["path"]) and f.get("size", 0) <= _MAX_TAILLE_FICHIER_CONTEXTE
+        ][:_MAX_FICHIERS_CONTEXTE]
+        if not candidats:
+            return None
+
+        fichiers: list[tuple[str, str]] = []
+        for chemin in candidats:
+            try:
+                contenu = await self._actions.lire_fichier(
+                    depot_nom, chemin, branche, installation_id
+                )
+            except Exception as exc:
+                log.warning("contexte_depot.fichier_indisponible",
+                            depot=depot_nom, chemin=chemin, err=str(exc))
+                continue
+            if contenu is not None:
+                fichiers.append((chemin, contenu))
+
+        if not fichiers:
+            return None
+        return assembler_contexte_depot(fichiers, MAX_CONTEXTE_DEPOT_CHARS)
+
     async def _intervenir(
         self, anomalie: Anomalie, depot: Any, depot_nom: str,
         extrait_log: str, regles: list[RegleDiagnostic],
     ) -> None:
-        proposition = await self._proposer(anomalie, extrait_log, regles)
+        proposition = await self._proposer(anomalie, extrait_log, regles, depot, depot_nom)
         if proposition is None:
             # Rien à exécuter, mais l'anomalie est tracée plutôt que perdue en DLQ.
             self._journaliser(
@@ -235,7 +294,7 @@ class Traitement:
         # None si le correcteur est en panne — l'issue s'ouvre quand même.
         # `proposition` peut être fournie par un appelant qui l'a déjà obtenue.
         if proposition is _A_CALCULER:
-            proposition = await self._proposer(anomalie, extrait_log, regles)
+            proposition = await self._proposer(anomalie, extrait_log, regles, depot, depot_nom)
 
         corps = _corps_issue(anomalie, depot_nom, proposition)
         await self._actions.ouvrir_issue(

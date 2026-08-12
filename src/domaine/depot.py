@@ -18,6 +18,11 @@ class DepotSurveille(BaseModel):
     installation_id: int
     actif: bool = True
     seuil_timeout_secondes: int = 3600
+    # Opt-in : autorise le correcteur à lire les manifestes/Dockerfiles du dépôt
+    # pour matérialiser un correctif (bump d'image...) plutôt que de s'abstenir
+    # faute de savoir quel fichier éditer. Coût en appels API et en tokens à
+    # chaque anomalie — à activer dépôt par dépôt, pas par défaut.
+    lecture_depot: bool = False
     responsables: list[str] = Field(default_factory=list)
     regles_ids: list[UUID] = Field(default_factory=list)
     cree_le: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
