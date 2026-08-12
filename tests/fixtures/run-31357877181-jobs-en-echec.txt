@@ -1,0 +1,91 @@
+===== Job en échec : Scan amazon/aws-cli:2.36.8 =====
+[…début du log tronqué…]
+026-44605 │          │        │ 4.16.1.3-29.amzn2023.0.6 │ 4.16.1.3-29.amzn2023.0.7 │ rpm: heap buffer overflow in NDB slot table parsing        │
+│                │                │          │        │                          │                          │ https://avd.aquasec.com/nvd/cve-2026-44605                 │
+├────────────────┤                │          │        │                          │                          │                                                            │
+│ rpm            │                │          │        │                          │                          │                                                            │
+│                │                │          │        │                          │                          │                                                            │
+├────────────────┤                │          │        │                          │                          │                                                            │
+│ rpm-build-libs │                │          │        │                          │                          │                                                            │
+│                │                │          │        │                          │                          │                                                            │
+├────────────────┤                │          │        │                          │                          │                                                            │
+│ rpm-libs       │                │          │        │                          │                          │                                                            │
+│                │                │          │        │                          │                          │                                                            │
+├────────────────┤                │          │        │                          │                          │                                                            │
+│ rpm-sign-libs  │                │          │        │                          │                          │                                                            │
+│                │                │          │        │                          │                          │                                                            │
+└────────────────┴────────────────┴──────────┴────────┴──────────────────────────┴──────────────────────────┴────────────────────────────────────────────────────────────┘
+##[error]Process completed with exit code 1.
+
+===== Job en échec : Scan telemachlearning/wordpress:6.8-php8.3-apache =====
+[…début du log tronqué…]
+ty in      │
+│                         │                │          │        │                   │                  │ image decoding                                               │
+│                         │                │          │        │                   │                  │ https://avd.aquasec.com/nvd/cve-2026-32741                   │
+│                         ├────────────────┤          │        │                   │                  ├──────────────────────────────────────────────────────────────┤
+│                         │ CVE-2026-32882 │          │        │                   │                  │ libheif: libheif: Denial of Service and Information          │
+│                         │                │          │        │                   │                  │ Disclosure vulnerability                                     │
+│                         │                │          │        │                   │                  │ https://avd.aquasec.com/nvd/cve-2026-32882                   │
+│                         ├────────────────┤          │        │                   │                  ├──────────────────────────────────────────────────────────────┤
+│                         │ CVE-2026-47178 │          │        │                   │                  │ libheif is a HEIF and AVIF file format decoder and encoder.  │
+│                         │                │          │        │                   │                  │ In...                                                        │
+│                         │                │          │        │                   │                  │ https://avd.aquasec.com/nvd/cve-2026-47178                   │
+├─────────────────────────┼────────────────┤          │        ├───────────────────┼──────────────────┼──────────────────────────────────────────────────────────────┤
+│ linux-libc-dev          │ CVE-2026-64561 │          │        │ 6.12.100-1        │ 6.12.101-1       │ kernel: KVM: x86: Check for invalid/obsolete root *after*    │
+│                         │                │          │        │                   │                  │ making MMU pages available...                                │
+│                         │                │          │        │                   │                  │ https://avd.aquasec.com/nvd/cve-2026-64561                   │
+└─────────────────────────┴────────────────┴──────────┴────────┴───────────────────┴──────────────────┴──────────────────────────────────────────────────────────────┘
+##[error]Process completed with exit code 1.
+
+===== Job en échec : Vulnerability Report =====
+[…début du log tronqué…]
+5161a1cab
+Artifact download completed successfully.
+SHA256 digest of downloaded artifact is 56361e909de39a503aba9ce8274ef0a131d96f8a51b7c0323f58e1874eff9591
+Artifact download completed successfully.
+SHA256 digest of downloaded artifact is 6528ec6536230bcb3c88ca8a4c4c754772aec4ce19e5fcbb6dbc31b5f5744d66
+Artifact download completed successfully.
+SHA256 digest of downloaded artifact is c070980efaf3a9588d0a14ddb5a14a1e2c4f94388d79f769c4c52937491fa776
+Artifact download completed successfully.
+SHA256 digest of downloaded artifact is 4c8eaa1dfae829e37dea16062c392cb3345c7d7ad2b97454e46574641fe54c04
+Artifact download completed successfully.
+SHA256 digest of downloaded artifact is a196da6e769c97e846372039ef7abd8b4b43b8d6553b1ba7639e215cd4bec097
+Artifact download completed successfully.
+SHA256 digest of downloaded artifact is 58f4e844e6ca589b75455d666872b70e133f2859f61dd4ecc59b8a4b2e0b9973
+Artifact download completed successfully.
+SHA256 digest of downloaded artifact is f7187a2259f94f9acc501c722dcdef08dfb160904f7eb42ef004cd4da65f6962
+Artifact download completed successfully.
+Total of 30 artifact(s) downloaded
+Download artifact has finished successfully
+##[group]Run # --fail-on rend le scan bloquant. Le code de sortie est mis de côté le
+[36;1m# --fail-on rend le scan bloquant. Le code de sortie est mis de côté le[0m
+[36;1m# temps d'écrire le résumé complet, sinon `set -e` couperait le rapport[0m
+[36;1m# au moment précis où il a quelque chose à dire.[0m
+[36;1mset +e[0m
+[36;1mpython3 .github/scripts/image-scan-report.py reports \[0m
+[36;1m  --fail-on "$FAIL_ON_SEVERITY" >> "$GITHUB_STEP_SUMMARY"[0m
+[36;1mreport_status=$?[0m
+[36;1mset -e[0m
+[36;1m[0m
+[36;1mscanned=$(find reports -name '*.json' | wc -l)[0m
+[36;1mexpected=30[0m
+[36;1mif [ "$scanned" -lt "$expected" ]; then[0m
+[36;1m  {[0m
+[36;1m    echo ""[0m
+[36;1m    echo "> ⚠️ $scanned/$expected image(s) scannée(s) : certains scans ont échoué,"[0m
+[36;1m    echo "> voir les jobs en erreur."[0m
+[36;1m  } >> "$GITHUB_STEP_SUMMARY"[0m
+[36;1mfi[0m
+[36;1m[0m
+[36;1mexit $report_status[0m
+shell: /usr/bin/bash -e {0}
+env:
+  FAIL_ON_SEVERITY: CRITICAL,HIGH
+  pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+  PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+  Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+  Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+  Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+  LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+##[endgroup]
+##[error]Process completed with exit code 1.
