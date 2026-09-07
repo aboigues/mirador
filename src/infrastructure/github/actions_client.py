@@ -155,6 +155,31 @@ def extraire_references_images(texte: str) -> list[str]:
     return list(vues)[:_MAX_RECHERCHES_IMAGES]
 
 
+def extraire_images_durcies(extrait_log: str, chemins_depot: list[str]) -> list[str]:
+    """Images durcies du DÉPÔT SURVEILLÉ (`docker/hardened/<nom>/...`) référencées
+    par un job en échec du log.
+
+    Une image durcie n'a pas de « fichier fautif » à éditer pour une CVE de
+    paquet OS : c'est `rebuild-hardened-images.yml` qui republie l'image avec
+    les paquets à jour (le durcissement est une photo, pas un état — cf. le
+    commentaire de ce workflow dans le dépôt surveillé). Cible ce cas précis
+    pour proposer une reconstruction plutôt qu'une abstention ; les images non
+    construites par le dépôt (officielles, tierces) n'ont pas de correctif
+    possible côté Mirador — attendre leur republication en amont.
+    """
+    dossiers_durcis = {
+        chemin.split("/")[2]
+        for chemin in chemins_depot
+        if chemin.startswith("docker/hardened/") and len(chemin.split("/")) > 2
+    }
+    trouvees: dict[str, None] = {}
+    for reference in extraire_references_images(extrait_log):
+        nom_image = reference.split(":")[0].rsplit("/", 1)[-1]
+        if nom_image in dossiers_durcis:
+            trouvees.setdefault(nom_image, None)
+    return list(trouvees)
+
+
 def est_fichier_manifeste(chemin: str) -> bool:
     """Un fichier de manifeste/config (YAML, Dockerfile) susceptible de référencer
     une image ou une dépendance — candidat pour le contexte dépôt du correcteur."""

@@ -11,6 +11,7 @@ from src.infrastructure.github.actions_client import (
     assembler_contexte_depot,
     assembler_extrait_jobs,
     est_fichier_manifeste,
+    extraire_images_durcies,
     extraire_references_images,
     extraire_texte_logs,
 )
@@ -191,3 +192,34 @@ def test_deduplique_et_plafonne():
     refs = extraire_references_images(texte + " repo0/image0:1.0")  # doublon
     assert len(refs) <= 5
     assert len(refs) == len(set(refs))
+
+
+# --- détection des images durcies du dépôt (rebuild plutôt qu'abstention) --
+
+
+def test_detecte_une_image_durcie_referencee():
+    # kubernetes-formation#149 : CVE de paquet OS dans une image que le dépôt
+    # construit lui-même (docker/hardened/wordpress) — pas de fichier à
+    # éditer, seule une reconstruction republie le paquet corrigé.
+    chemins = ["docker/hardened/wordpress/Dockerfile", "docker/hardened/README.md"]
+    images = extraire_images_durcies(
+        "Scan telemachlearning/wordpress:7.0-php8.5-apache CVE-2026-33164 HIGH", chemins
+    )
+    assert images == ["wordpress"]
+
+
+def test_ignore_une_image_officielle_non_construite_par_le_depot():
+    chemins = ["docker/hardened/wordpress/Dockerfile"]
+    assert extraire_images_durcies("Scan postgres:17-alpine CVE-2026-14456 HIGH", chemins) == []
+
+
+def test_aucun_dossier_docker_hardened_dans_le_depot():
+    assert extraire_images_durcies(
+        "Scan telemachlearning/wordpress:7.0-php8.5-apache HIGH", ["README.md"]
+    ) == []
+
+
+def test_deduplique_les_images_durcies():
+    chemins = ["docker/hardened/nginx/Dockerfile"]
+    texte = "Scan telemachlearning/nginx:1.29-alpine HIGH\nScan telemachlearning/nginx:1.29-alpine HIGH"
+    assert extraire_images_durcies(texte, chemins) == ["nginx"]

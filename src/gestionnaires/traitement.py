@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional
 
 import structlog
 
-from src.agents.correcteur import MAX_LOG_CHARS, TypeCorrection
+from src.agents.correcteur import MAX_LOG_CHARS, PropositionCorrection, TypeCorrection
 from src.agents.superviseur import DecisionEscalade
 from src.domaine.anomalie import Anomalie
 from src.domaine.journal import EvenementJournal, TypeEvenement
@@ -23,6 +23,7 @@ from src.infrastructure.github.actions_client import (
     assembler_contexte_depot,
     assembler_extrait_jobs,
     est_fichier_manifeste,
+    extraire_images_durcies,
     extraire_references_images,
     extraire_texte_logs,
 )
@@ -35,6 +36,10 @@ _ACTION_PR_CONSTRUCTION = "PR_EN_CONSTRUCTION"
 _ACTION_ABSTENTION = "ABSTENTION"
 _ACTION_NON_MATERIALISABLE = "CORRECTIF_NON_MATERIALISABLE"
 _WORKFLOW_AUTOFIX = "mirador-autofix.yml"
+# Reconstruit et republie les images durcies du dépôt (docker/hardened/) avec
+# les paquets OS à jour — seul correctif possible pour une CVE de paquet OS
+# dans une image que le dépôt construit lui-même (pas de fichier à éditer).
+_WORKFLOW_REBUILD_IMAGES = "rebuild-hardened-images.yml"
 
 # Budget de contexte dépôt envoyé au correcteur (fichiers de manifeste/config),
 # quand `depot.lecture_depot` est activé. Calé sur le cas réel kubernetes-
@@ -184,9 +189,26 @@ class Traitement:
         )
         contexte_depot = None
         if getattr(depot, "lecture_depot", False):
-            contexte_depot = await self._recuperer_contexte_depot(
+            contexte_depot, images_durcies = await self._recuperer_contexte_depot(
                 depot_nom, anomalie_branche(anomalie), depot.installation_id, extrait_log
             )
+            if images_durcies:
+                # Décision déterministe (pas d'appel Claude) : une CVE de paquet
+                # OS dans une image que le dépôt construit lui-même n'a pas de
+                # fichier fautif à éditer, seule une reconstruction la corrige.
+                log.info("correcteur.rebuild_image_deterministe",
+                         anomalie_id=str(anomalie.id), images=images_durcies)
+                return PropositionCorrection(
+                    type=TypeCorrection.REBUILD_IMAGES,
+                    justification=(
+                        "Image(s) durcie(s) du dépôt (docker/hardened/) parmi les "
+                        f"jobs en échec : {', '.join(images_durcies)}. Le correctif "
+                        "est une reconstruction (rebuild-hardened-images.yml), pas "
+                        "une modification de fichier — les paquets OS corrigés ne "
+                        "sont disponibles que sur une image republiée."
+                    ),
+                    images=images_durcies,
+                )
         try:
             return await self._correcteur.proposer(anomalie, extrait_log, regle, contexte_depot)
         except Exception as exc:
@@ -196,14 +218,16 @@ class Traitement:
 
     async def _recuperer_contexte_depot(
         self, depot_nom: str, branche: str, installation_id: int, extrait_log: str,
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], list[str]]:
         """Contenu des fichiers de manifeste/config du dépôt, pour que le
         correcteur puisse localiser une référence fautive et produire un
         correctif matérialisable au lieu de s'abstenir faute d'accès au dépôt.
+        Retourne aussi les images durcies du dépôt (docker/hardened/) repérées
+        parmi les jobs en échec — cf. `extraire_images_durcies`.
 
-        Deux sources de candidats, dans cet ordre de PRIORITÉ (les premiers de
-        la liste passent en premier dans `assembler_contexte_depot`, donc
-        gagnent le budget en cas de conflit) :
+        Deux sources de candidats pour le contexte, dans cet ordre de PRIORITÉ
+        (les premiers de la liste passent en premier dans
+        `assembler_contexte_depot`, donc gagnent le budget en cas de conflit) :
         1. Recherche ciblée (Code Search) sur les références d'image/dépendance
            repérées dans le log — précis, quelques appels API seulement.
         2. Repli par taille croissante sur l'arbre du dépôt, pour compléter s'il
@@ -223,7 +247,13 @@ class Traitement:
             arbre = await self._actions.lister_fichiers(depot_nom, branche, installation_id)
         except Exception as exc:
             log.warning("contexte_depot.arbre_indisponible", depot=depot_nom, err=str(exc))
-            return None
+            return None, []
+
+        images_durcies = extraire_images_durcies(extrait_log, [f["path"] for f in arbre])
+        if images_durcies:
+            # Court-circuite la collecte de contexte (Code Search + lectures) :
+            # inutile de la payer, la décision est déjà prise (REBUILD_IMAGES).
+            return None, images_durcies
 
         prioritaires: list[str] = []
         for reference in extraire_references_images(extrait_log):
@@ -253,7 +283,7 @@ class Traitement:
                 candidats.append(chemin)
 
         if not candidats:
-            return None
+            return None, images_durcies
 
         fichiers: list[tuple[str, str]] = []
         for chemin in candidats:
@@ -269,8 +299,8 @@ class Traitement:
                 fichiers.append((chemin, contenu))
 
         if not fichiers:
-            return None
-        return assembler_contexte_depot(fichiers, MAX_CONTEXTE_DEPOT_CHARS)
+            return None, images_durcies
+        return assembler_contexte_depot(fichiers, MAX_CONTEXTE_DEPOT_CHARS), images_durcies
 
     async def _intervenir(
         self, anomalie: Anomalie, depot: Any, depot_nom: str,
@@ -316,6 +346,12 @@ class Traitement:
                 proposition.model_dump(), depot, depot_nom,
                 anomalie.workflow_run_id, anomalie_branche(anomalie),
             )
+        elif proposition.type == TypeCorrection.REBUILD_IMAGES:
+            await self._actions.declencher_workflow(
+                depot_nom, _WORKFLOW_REBUILD_IMAGES, anomalie_branche(anomalie),
+                {"push": "true"}, depot.installation_id,
+            )
+            action = TypeCorrection.REBUILD_IMAGES
         else:
             await self._actions.relancer_workflow(
                 depot_nom, anomalie.workflow_run_id, depot.installation_id
@@ -421,6 +457,13 @@ class Traitement:
                     proposition, depot, depot_nom, run_id,
                     details.get("head_branch", "main"),
                 )
+            if proposition.get("type") == TypeCorrection.REBUILD_IMAGES:
+                await self._actions.declencher_workflow(
+                    depot_nom, _WORKFLOW_REBUILD_IMAGES,
+                    details.get("head_branch", "main"),
+                    {"push": "true"}, depot.installation_id,
+                )
+                return TypeCorrection.REBUILD_IMAGES
             await self._actions.relancer_workflow(depot_nom, run_id, depot.installation_id)
             return TypeCorrection.RELANCE
         except Exception as exc:
@@ -530,6 +573,10 @@ def _message_approbation(acteur: str, action: Optional[str]) -> str:
         return f"✅ Approuvé par @{acteur} — workflow relancé par Mirador."
     if action == TypeCorrection.PULL_REQUEST:
         return f"✅ Approuvé par @{acteur} — pull request de correction ouverte par Mirador."
+    if action == TypeCorrection.REBUILD_IMAGES:
+        return (f"✅ Approuvé par @{acteur} — reconstruction des images durcies "
+                f"déclenchée (rebuild-hardened-images.yml) ; les images corrigées "
+                f"seront republiées automatiquement.")
     if action == _ACTION_PR_CONSTRUCTION:
         return (f"✅ Approuvé par @{acteur} — correctif en cours de construction "
                 f"(build lancé) ; la pull request sera ouverte automatiquement.")
@@ -573,6 +620,11 @@ def _section_proposition(proposition: Any) -> str:
                 "Aucune action automatique n'est associée à cette anomalie — "
                 "`/approuver` ne déclenchera rien. Le diagnostic revient à un "
                 "humain.\n\n")
+    if proposition.type == TypeCorrection.REBUILD_IMAGES:
+        images = ", ".join(proposition.images or [])
+        return (f"## Correction proposée par Mirador\n\n"
+                f"**Reconstruction d'image(s) durcie(s)** — {proposition.justification}\n\n"
+                f"Images concernées : {images}\n\n")
     if proposition.type == TypeCorrection.PULL_REQUEST:
         detail = ""
         if proposition.corps_pr:

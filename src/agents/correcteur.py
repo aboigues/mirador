@@ -38,6 +38,11 @@ class TypeCorrection:
     RELANCE = "RELANCE"
     PULL_REQUEST = "PULL_REQUEST"
     ABSTENTION = "ABSTENTION"
+    # Reconstruction d'une image durcie du dépôt (docker/hardened/) : jamais
+    # proposé par Claude (absent de `_SCHEMA_PROPOSITION`) — décision
+    # déterministe prise par `Traitement._proposer`, qui seul a accès à la
+    # liste des dossiers docker/hardened/ du dépôt surveillé.
+    REBUILD_IMAGES = "REBUILD_IMAGES"
 
 
 class RefusModele(Exception):
@@ -67,6 +72,9 @@ class PropositionCorrection(BaseModel):
     # Correctif de dépendances Go → délégué à un workflow de build réel (go mod tidy)
     # qui régénère go.mod/go.sum correctement. Préféré aux `fichiers` pour les deps.
     mise_a_jour: Optional[MiseAJourDeps] = None
+    # Images durcies (docker/hardened/<nom>) à reconstruire — REBUILD_IMAGES
+    # uniquement (jamais rempli par Claude, cf. TypeCorrection.REBUILD_IMAGES).
+    images: Optional[list[str]] = None
 
 
 # Schéma de sortie structurée imposé au modèle
