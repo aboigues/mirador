@@ -379,6 +379,86 @@ class TestContexteDepot:
         assert correcteur.dernier_contexte_depot is None
 
 
+class TestReconstructionImagesDurcies:
+    """Une CVE de paquet OS dans une image que le dépôt CONSTRUIT lui-même
+    (docker/hardened/<nom>) n'a pas de fichier à éditer : seule une
+    reconstruction (rebuild-hardened-images.yml) republie le paquet corrigé.
+    Détection déterministe, sans appel Claude — cf. kubernetes-formation#149 :
+    15 jobs de scan en échec, tous des CVE OS avec `Fixed Version`, mais sans
+    aucun fichier du dépôt à éditer pour la plupart (images officielles) —
+    sauf pour les images durcies (wordpress/httpd/nginx), où Mirador
+    s'abstenait à tort faute de connaître ce chemin d'action.
+    """
+
+    def _actions_image_durcie(self) -> "_ActionsFake":
+        return _ActionsFake(
+            logs=_zip_logs(
+                "Scan telemachlearning/wordpress:7.0-php8.5-apache CVE-2026-33164 HIGH"
+            ),
+            arbre=[{"path": "docker/hardened/wordpress/Dockerfile", "size": 500}],
+        )
+
+    async def test_detection_court_circuite_le_correcteur(self):
+        actions = self._actions_image_durcie()
+        writer = _WriterFake()
+        correcteur = _CorrecteurFake(
+            PropositionCorrection(type=TypeCorrection.ABSTENTION, justification="x")
+        )
+        traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        assert correcteur.appels == 0, "décision déterministe : pas d'appel Claude"
+        esc = next(e for e in writer.evenements if e.type_evenement == TypeEvenement.ESCALADE)
+        assert esc.details["proposition"]["type"] == TypeCorrection.REBUILD_IMAGES
+        assert esc.details["proposition"]["images"] == ["wordpress"]
+
+    async def test_issue_affiche_la_proposition_de_reconstruction(self):
+        actions = self._actions_image_durcie()
+        writer = _WriterFake()
+        correcteur = _CorrecteurFake(
+            PropositionCorrection(type=TypeCorrection.ABSTENTION, justification="x")
+        )
+        traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        corps = actions.issues_ouvertes[0]["corps"]
+        assert "Reconstruction d'image" in corps
+        assert "wordpress" in corps
+
+    async def test_approuver_declenche_le_rebuild(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        details = {
+            "proposition": {
+                "type": TypeCorrection.REBUILD_IMAGES,
+                "justification": "j",
+                "images": ["wordpress"],
+            },
+            "workflow_run_id": 555, "head_branch": "main",
+        }
+        traitement = _traitement(actions, writer, correcteur, lire_proposition=lambda _id: details)
+        await traitement.traiter(_message_validation(commande="approuver"))
+        assert len(actions.workflows) == 1
+        w = actions.workflows[0]
+        assert w["fichier"] == "rebuild-hardened-images.yml"
+        assert w["ref"] == "main"
+        assert w["inputs"] == {"push": "true"}
+        assert actions.branches == [] and actions.prs == [] and actions.relances == []
+        assert "reconstruction" in actions.commentaires[0]["corps"].lower()
+        assert actions.fermetures[0]["label"] == "resolved"
+
+    async def test_intervention_auto_low_declenche_directement_le_rebuild(self):
+        # Échec sur branche feature sans règle connue → LOW → intervention auto.
+        actions = self._actions_image_durcie()
+        writer = _WriterFake()
+        correcteur = _CorrecteurFake(
+            PropositionCorrection(type=TypeCorrection.ABSTENTION, justification="x")
+        )
+        traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
+        await traitement.traiter(_message_workflow())
+        assert len(actions.workflows) == 1
+        assert actions.workflows[0]["fichier"] == "rebuild-hardened-images.yml"
+        assert actions.relances == [] and actions.prs == []
+
+
 class TestDeduplicationDeliveryId:
     async def test_message_deja_traite_est_ignore(self):
         # deja_traite renvoie True → aucune action ni journalisation.
