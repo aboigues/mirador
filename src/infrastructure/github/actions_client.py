@@ -156,8 +156,7 @@ def extraire_references_images(texte: str) -> list[str]:
 
 
 def extraire_images_durcies(extrait_log: str, chemins_depot: list[str]) -> list[str]:
-    """Images durcies du DÉPÔT SURVEILLÉ (`docker/hardened/<nom>/...`) référencées
-    par un job en échec du log.
+    """Images durcies du DÉPÔT SURVEILLÉ référencées par un job en échec du log.
 
     Une image durcie n'a pas de « fichier fautif » à éditer pour une CVE de
     paquet OS : c'est `rebuild-hardened-images.yml` qui republie l'image avec
@@ -166,12 +165,18 @@ def extraire_images_durcies(extrait_log: str, chemins_depot: list[str]) -> list[
     pour proposer une reconstruction plutôt qu'une abstention ; les images non
     construites par le dépôt (officielles, tierces) n'ont pas de correctif
     possible côté Mirador — attendre leur republication en amont.
+
+    Deux conventions de rangement observées selon le dépôt : `docker/hardened/
+    <nom>/...` (kubernetes-formation) ou `hardened/<nom>/...` à la racine
+    (docker-formation) — les deux sont reconnues.
     """
-    dossiers_durcis = {
-        chemin.split("/")[2]
-        for chemin in chemins_depot
-        if chemin.startswith("docker/hardened/") and len(chemin.split("/")) > 2
-    }
+    dossiers_durcis: set[str] = set()
+    for chemin in chemins_depot:
+        segments = chemin.split("/")
+        if chemin.startswith("docker/hardened/") and len(segments) > 2:
+            dossiers_durcis.add(segments[2])
+        elif chemin.startswith("hardened/") and len(segments) > 1:
+            dossiers_durcis.add(segments[1])
     trouvees: dict[str, None] = {}
     for reference in extraire_references_images(extrait_log):
         nom_image = reference.split(":")[0].rsplit("/", 1)[-1]
