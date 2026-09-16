@@ -113,7 +113,7 @@ class Traitement:
         if not depot.actif:
             return
 
-        extrait_log = await self._recuperer_extrait_log(
+        extrait_log, noms_jobs = await self._recuperer_extrait_log(
             depot_nom, message.get("workflow_run_id"), depot.installation_id
         )
 
@@ -129,19 +129,30 @@ class Traitement:
         if decision == DecisionEscalade.JOURNALISER_SEULEMENT:
             self._journaliser(TypeEvenement.DETECTION, anomalie, depot_nom, "SUCCÈS")
         elif decision == DecisionEscalade.INTERVENTION_AUTO:
-            await self._intervenir(anomalie, depot, depot_nom, extrait_log, regles)
+            await self._intervenir(anomalie, depot, depot_nom, extrait_log, regles, noms_jobs)
         else:  # NOTIFIER_ET_ATTENDRE ou VALIDATION_HUMAINE_REQUISE
-            await self._escalader(anomalie, depot, depot_nom, extrait_log, regles)
+            await self._escalader(anomalie, depot, depot_nom, extrait_log, regles, noms_jobs=noms_jobs)
 
     async def _recuperer_extrait_log(
         self, depot_nom: str, run_id: Any, installation_id: int
-    ) -> str:
-        """Extrait de log à analyser : les jobs EN ÉCHEC du run, et eux seuls.
+    ) -> tuple[str, list[str]]:
+        """Extrait de log à analyser (les jobs EN ÉCHEC du run, et eux seuls) et
+        la liste de TOUS leurs noms, même ceux exclus de l'extrait.
 
         Un run de matrice compte des dizaines de jobs. Concaténer tout le run puis
         n'en garder que la fin donne au correcteur le log d'un job qui a RÉUSSI,
         d'où une cause inventée de toutes pièces (kubernetes-formation#129 : 3 scans
         Trivy en échec, Mirador a lu « List Images to Scan » et conclu « relance »).
+        `assembler_extrait_jobs` ne retient donc que les `_MAX_JOBS_ANALYSES`
+        premiers jobs dans l'extrait envoyé au correcteur (budget/coût token).
+
+        Mais les NOMS de tous les jobs (ex. « Scan telemachlearning/wordpress:… »)
+        sont gratuits — aucun téléchargement de log supplémentaire — et suffisent
+        à repérer une image durcie (kubernetes-formation#155 : 13 jobs en échec,
+        wordpress en position 12, son log exclu de l'extrait faisait abstenir
+        Mirador à tort alors que le nom du job suffisait à trancher). Retournés
+        à part pour que la détection déterministe des images durcies ne dépende
+        pas de la troncature appliquée au texte destiné au correcteur.
 
         Repli sur le log complet du run si aucun job en échec n'est identifiable —
         l'échec est alors au niveau du run lui-même (annulation, erreur de config).
@@ -156,6 +167,7 @@ class Traitement:
             jobs = []
 
         if jobs:
+            noms_jobs = [job["nom"] for job in jobs]
             morceaux = [
                 (
                     job["nom"],
@@ -167,16 +179,16 @@ class Traitement:
                 )
                 for job in jobs
             ]
-            return assembler_extrait_jobs(morceaux, MAX_LOG_CHARS)
+            return assembler_extrait_jobs(morceaux, MAX_LOG_CHARS), noms_jobs
 
         contenu_logs = await self._actions.telecharger_logs(
             depot_nom, run_id, installation_id
         )
-        return extraire_texte_logs(contenu_logs)
+        return extraire_texte_logs(contenu_logs), []
 
     async def _proposer(
         self, anomalie: Anomalie, extrait_log: str, regles: list[RegleDiagnostic],
-        depot: Any, depot_nom: str,
+        depot: Any, depot_nom: str, noms_jobs: list[str] = (),
     ) -> Any:
         """Propose une correction, ou None si le correcteur est indisponible.
 
@@ -190,7 +202,8 @@ class Traitement:
         contexte_depot = None
         if getattr(depot, "lecture_depot", False):
             contexte_depot, images_durcies = await self._recuperer_contexte_depot(
-                depot_nom, anomalie_branche(anomalie), depot.installation_id, extrait_log
+                depot_nom, anomalie_branche(anomalie), depot.installation_id,
+                extrait_log, noms_jobs,
             )
             if images_durcies:
                 # Décision déterministe (pas d'appel Claude) : une CVE de paquet
@@ -218,12 +231,20 @@ class Traitement:
 
     async def _recuperer_contexte_depot(
         self, depot_nom: str, branche: str, installation_id: int, extrait_log: str,
+        noms_jobs: list[str] = (),
     ) -> tuple[Optional[str], list[str]]:
         """Contenu des fichiers de manifeste/config du dépôt, pour que le
         correcteur puisse localiser une référence fautive et produire un
         correctif matérialisable au lieu de s'abstenir faute d'accès au dépôt.
         Retourne aussi les images durcies du dépôt (docker/hardened/) repérées
         parmi les jobs en échec — cf. `extraire_images_durcies`.
+
+        La recherche d'images durcies porte sur `extrait_log` ET `noms_jobs`
+        (tous les jobs en échec, pas seulement ceux retenus dans l'extrait
+        tronqué) : un nom de job comme « Scan telemachlearning/wordpress:… »
+        suffit à la détection, gratuitement, même quand son log a été exclu de
+        l'extrait par le budget de `assembler_extrait_jobs` (kubernetes-
+        formation#155 — cf. `_recuperer_extrait_log`).
 
         Deux sources de candidats pour le contexte, dans cet ordre de PRIORITÉ
         (les premiers de la liste passent en premier dans
@@ -249,7 +270,8 @@ class Traitement:
             log.warning("contexte_depot.arbre_indisponible", depot=depot_nom, err=str(exc))
             return None, []
 
-        images_durcies = extraire_images_durcies(extrait_log, [f["path"] for f in arbre])
+        texte_reperage = extrait_log + "\n" + "\n".join(noms_jobs)
+        images_durcies = extraire_images_durcies(texte_reperage, [f["path"] for f in arbre])
         if images_durcies:
             # Court-circuite la collecte de contexte (Code Search + lectures) :
             # inutile de la payer, la décision est déjà prise (REBUILD_IMAGES).
@@ -304,9 +326,9 @@ class Traitement:
 
     async def _intervenir(
         self, anomalie: Anomalie, depot: Any, depot_nom: str,
-        extrait_log: str, regles: list[RegleDiagnostic],
+        extrait_log: str, regles: list[RegleDiagnostic], noms_jobs: list[str] = (),
     ) -> None:
-        proposition = await self._proposer(anomalie, extrait_log, regles, depot, depot_nom)
+        proposition = await self._proposer(anomalie, extrait_log, regles, depot, depot_nom, noms_jobs)
         if proposition is None:
             # Rien à exécuter, mais l'anomalie est tracée plutôt que perdue en DLQ.
             self._journaliser(
@@ -321,7 +343,7 @@ class Traitement:
             log.info("intervention.abstention", anomalie_id=str(anomalie.id))
             await self._escalader(
                 anomalie, depot, depot_nom, extrait_log, regles,
-                proposition=proposition,
+                proposition=proposition, noms_jobs=noms_jobs,
             )
             return
         if (
@@ -336,7 +358,7 @@ class Traitement:
             log.info("intervention.pr_non_materialisable", anomalie_id=str(anomalie.id))
             await self._escalader(
                 anomalie, depot, depot_nom, extrait_log, regles,
-                proposition=proposition,
+                proposition=proposition, noms_jobs=noms_jobs,
             )
             return
         anomalie.demarrer_traitement()
@@ -366,14 +388,14 @@ class Traitement:
     async def _escalader(
         self, anomalie: Anomalie, depot: Any, depot_nom: str,
         extrait_log: str, regles: list[RegleDiagnostic],
-        proposition: Any = _A_CALCULER,
+        proposition: Any = _A_CALCULER, noms_jobs: list[str] = (),
     ) -> None:
         # Calcule la proposition d'intervention et la PERSISTE dans l'événement
         # d'escalade : elle sera exécutée telle quelle si un responsable /approuver.
         # None si le correcteur est en panne — l'issue s'ouvre quand même.
         # `proposition` peut être fournie par un appelant qui l'a déjà obtenue.
         if proposition is _A_CALCULER:
-            proposition = await self._proposer(anomalie, extrait_log, regles, depot, depot_nom)
+            proposition = await self._proposer(anomalie, extrait_log, regles, depot, depot_nom, noms_jobs)
 
         corps = _corps_issue(anomalie, depot_nom, proposition)
         await self._actions.ouvrir_issue(

@@ -146,13 +146,22 @@ def extraire_references_images(texte: str) -> list[str]:
     recherche infructueuse ne coûte qu'un appel API) ; les horodatages courts
     (« 05:13 ») sont explicitement écartés, seule source de bruit fréquente.
     """
+    return _toutes_references_images(texte)[:_MAX_RECHERCHES_IMAGES]
+
+
+def _toutes_references_images(texte: str) -> list[str]:
+    """Comme `extraire_references_images`, mais SANS le plafond appelant Code
+    Search : celui-ci borne un coût d'appels API, sans rapport avec la
+    détection d'images durcies (déterministe, gratuite) qui doit voir TOUTES
+    les références, pas seulement les 5 premières (kubernetes-formation#155 :
+    la 6e référence distincte, wordpress, était perdue par ce plafond)."""
     vues: dict[str, None] = {}
     for correspondance in _PATTERN_REFERENCE_IMAGE.finditer(texte):
         reference, tag = correspondance.group(1), correspondance.group(2)
         if tag.isdigit() and len(tag) <= 2:
             continue  # horodatage (05:13) ou port, pas un tag d'image
         vues.setdefault(f"{reference}:{tag}", None)
-    return list(vues)[:_MAX_RECHERCHES_IMAGES]
+    return list(vues)
 
 
 def extraire_images_durcies(extrait_log: str, chemins_depot: list[str]) -> list[str]:
@@ -178,7 +187,7 @@ def extraire_images_durcies(extrait_log: str, chemins_depot: list[str]) -> list[
         elif chemin.startswith("hardened/") and len(segments) > 1:
             dossiers_durcis.add(segments[1])
     trouvees: dict[str, None] = {}
-    for reference in extraire_references_images(extrait_log):
+    for reference in _toutes_references_images(extrait_log):
         nom_image = reference.split(":")[0].rsplit("/", 1)[-1]
         if nom_image in dossiers_durcis:
             trouvees.setdefault(nom_image, None)

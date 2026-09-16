@@ -458,6 +458,36 @@ class TestReconstructionImagesDurcies:
         assert actions.workflows[0]["fichier"] == "rebuild-hardened-images.yml"
         assert actions.relances == [] and actions.prs == []
 
+    async def test_image_durcie_detectee_meme_hors_du_budget_de_log(self):
+        # kubernetes-formation#155 (2026-09-14) : 13 jobs en échec, dont
+        # wordpress (durcie) en position 12 — _MAX_JOBS_ANALYSES (5) exclut son
+        # log de l'extrait envoyé au correcteur, donc `extraire_images_durcies`
+        # ne voit jamais la référence à l'image et Mirador s'abstient à tort.
+        # Le NOM du job ("Scan telemachlearning/wordpress:...") est lui
+        # toujours disponible, sans coût de téléchargement — la détection doit
+        # s'appuyer dessus, pas seulement sur les logs tronqués.
+        jobs = [
+            (1, "Scan postgres:17-alpine", "failure", "CVE-2026-1 FIXED in 1.2\n"),
+            (2, "Scan mysql:8.4", "failure", "CVE-2026-2 FIXED in 1.2\n"),
+            (3, "Scan nginx:alpine", "failure", "CVE-2026-3 FIXED in 1.2\n"),
+            (4, "Scan redis:alpine", "failure", "CVE-2026-4 FIXED in 1.2\n"),
+            (5, "Scan alpine/helm:3.21.3", "failure", "CVE-2026-5 FIXED in 1.2\n"),
+            (6, "Scan telemachlearning/wordpress:7.0-php8.5-apache", "failure",
+             "CVE-2026-33164 FIXED in 1.2\n"),
+        ]
+        actions = _ActionsAvecJobs(jobs)
+        actions._arbre = [{"path": "docker/hardened/wordpress/Dockerfile", "size": 500}]
+        writer = _WriterFake()
+        correcteur = _CorrecteurFake(
+            PropositionCorrection(type=TypeCorrection.ABSTENTION, justification="x")
+        )
+        traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
+        await traitement.traiter(_message_workflow(conclusion="timed_out", head_branch="main"))
+        assert correcteur.appels == 0, "décision déterministe : pas d'appel Claude"
+        esc = next(e for e in writer.evenements if e.type_evenement == TypeEvenement.ESCALADE)
+        assert esc.details["proposition"]["type"] == TypeCorrection.REBUILD_IMAGES
+        assert esc.details["proposition"]["images"] == ["wordpress"]
+
 
 class TestDeduplicationDeliveryId:
     async def test_message_deja_traite_est_ignore(self):
