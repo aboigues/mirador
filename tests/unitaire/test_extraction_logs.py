@@ -223,3 +223,14 @@ def test_deduplique_les_images_durcies():
     chemins = ["docker/hardened/nginx/Dockerfile"]
     texte = "Scan telemachlearning/nginx:1.29-alpine HIGH\nScan telemachlearning/nginx:1.29-alpine HIGH"
     assert extraire_images_durcies(texte, chemins) == ["nginx"]
+
+
+def test_detecte_une_image_durcie_a_la_racine_hardened():
+    # docker-formation range ses images durcies sous hardened/ (racine), pas
+    # docker/hardened/ comme kubernetes-formation — les deux conventions
+    # doivent être reconnues.
+    chemins = ["hardened/grafana/Dockerfile", "hardened/README.md"]
+    images = extraire_images_durcies(
+        "Scan telemachlearning/grafana:13.0.2 CVE-2026-1234 HIGH", chemins
+    )
+    assert images == ["grafana"]
