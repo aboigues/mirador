@@ -38,6 +38,10 @@ env:
   SCW_DEFAULT_REGION: fr-par
   SCW_PROFILE: ""
 
+# Moindre privilège : le GITHUB_TOKEN ne fait que lire le dépôt (checkout).
+permissions:
+  contents: read
+
 jobs:
   configurer:
     name: Pose de l'environnement des fonctions

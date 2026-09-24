@@ -15,6 +15,10 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Moindre privilège : le GITHUB_TOKEN ne fait que lire le dépôt (checkout).
+permissions:
+  contents: read
+
 jobs:
   replay:
     name: Replay #142 (appel Claude réel)
