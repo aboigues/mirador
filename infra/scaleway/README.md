@@ -97,13 +97,17 @@ scw iam api-key create application-id=$APP_ID \
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | clé API app, scopée MIRADOR (§ IAM) |
 | `SQS_ENDPOINT_URL` | `https://sqs.mnq.fr-par.scaleway.com` |
 | `SQS_QUEUE_URL` | `…/project-4135267b-…/mirador-webhooks` (queue standard) |
-| `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` | credentials MnQ (dans `.secrets.env`) |
+| `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` | credentials MnQ (dans le fichier de secrets local) |
 | `AWS_REGION` | `fr-par` |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `WEBHOOK_SECRET` | voir `docs/github-app.md` |
 | `ANTHROPIC_API_KEY` | console Anthropic |
 | `MIRADOR_DEPOTS` | config JSON des dépôts (voir `docs/github-app.md` §4) |
 
-> 🔒 `.secrets.env` et tout fichier de secrets sont exclus par `.gitignore`.
+> 🔒 Le fichier de secrets local vit **hors du dépôt** : `~/.config/mirador/secrets.env`
+> (répertoire `700`, fichier `600`, hors dossier synchronisé). Les scripts le lisent
+> à cet emplacement, ou à celui de `MIRADOR_SECRETS` s'il est défini. Ne jamais le
+> recréer dans l'arbre de travail : un fichier swap ou un `git add` de trop suffit à le
+> publier (incident du 2026-07-15, voir `docs/rotation-secrets.md`).
 
 ## Déploiement des fonctions
 
@@ -120,7 +124,7 @@ Deux fonctions Scaleway dans le namespace `mirador` (projet MIRADOR) :
 
 ### Déploiement initial (une fois)
 
-Remplir `infra/scaleway/.secrets.env` avec **toutes** les variables du tableau
+Remplir `~/.config/mirador/secrets.env` avec **toutes** les variables du tableau
 ci-dessus (env + secrets), puis :
 
 ```bash
@@ -170,7 +174,7 @@ Ce qu'il fait :
 4. Affiche l'URL du webhook, les étapes du re-test E2E réel et les commandes de
    vérification (logs de la fonction, profondeur des queues, issues ouvertes).
 
-> Prérequis : `.secrets.env` rempli (les credentials MnQ servent à la purge) et
+> Prérequis : `~/.config/mirador/secrets.env` rempli (les credentials MnQ servent à la purge) et
 > le profil scw `telemach`.
 
 #### Purge des queues (`purger_queues.py`)
@@ -178,10 +182,10 @@ Ce qu'il fait :
 Vide une paire de queues (principale + DLQ) — utile avant un re-test pour ne pas
 rejouer d'anciens messages. **Irréversible**, et limité à un appel par minute et
 par queue (`PurgeQueue`). Utilise les credentials MnQ (`MNQ_ACCESS_KEY` /
-`MNQ_SECRET_KEY`) chargés depuis `.secrets.env` :
+`MNQ_SECRET_KEY`) chargés depuis `~/.config/mirador/secrets.env` :
 
 ```bash
-set -a && . infra/scaleway/.secrets.env && set +a
+set -a && . ~/.config/mirador/secrets.env && set +a
 python infra/scaleway/purger_queues.py                # mirador-webhooks + DLQ
 python infra/scaleway/purger_queues.py mirador-writes # autre paire
 ```

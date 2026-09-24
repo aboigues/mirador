@@ -6,7 +6,7 @@ fautive se découvre ici, pas en production. Toutes les vérifications sont en
 lecture seule — sauf MnQ, qui publie un message inerte (type inconnu du
 pipeline, donc ignoré par le traitement).
 
-    set -a && . infra/scaleway/.secrets.env && set +a
+    set -a && . ~/.config/mirador/secrets.env && set +a
     .venv/bin/python infra/scaleway/verifier_secrets.py
 
 Aucune valeur de secret n'est affichée : seulement un verdict par clé.

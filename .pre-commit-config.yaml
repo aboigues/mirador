@@ -1,0 +1,27 @@
+# Bloque tout secret AVANT qu'il n'entre dans l'historique (incident du 2026-07-15 :
+# un swap vim de fichier de secrets commité). Installation, une fois par clone :
+#   pip install -e ".[dev]" && pre-commit install
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      # Le hook officiel (`gitleaks git --staged`) analyse le diff indexé : git y
+      # réduit tout fichier contenant un octet NUL à « Binary files differ », donc
+      # un swap vim (binaire) passe sans être lu. On scanne les FICHIERS indexés
+      # eux-mêmes — pre-commit a remisé les modifs non indexées, le contenu lu est
+      # donc bien celui qui sera commité.
+      - id: gitleaks
+        name: gitleaks (contenu des fichiers indexés, binaires compris)
+        entry: gitleaks dir --config .gitleaks.toml --no-banner --redact --verbose
+        pass_filenames: true
+
+  - repo: local
+    hooks:
+      # Défense par le nom, indépendante du contenu : ces fichiers n'ont rien à
+      # faire dans le dépôt, même ajoutés de force (`git add -f`).
+      - id: fichiers-interdits
+        name: fichiers de secrets, swap et sauvegardes d'éditeur
+        language: fail
+        entry: "Fichier interdit dans le dépôt (secret, swap ou sauvegarde d'éditeur) :"
+        files: '(^|/)(\.[^/]*\.sw[a-p]|[^/]*~|#[^/]*#|\.#[^/]*|[^/]*secrets?\.env[^/]*|\.env(\.[^/]*)?|[^/]*\.(pem|key|p12|pfx))$'
+        exclude: '(^|/)\.env\.example$'

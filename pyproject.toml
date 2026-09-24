@@ -30,6 +30,7 @@ dev = [
     "respx>=0.21.0",
     "httpx>=0.28.1",
     "moto[s3]>=5.0.0",
+    "pre-commit>=4.6.2",
 ]
 
 [tool.setuptools.packages.find]

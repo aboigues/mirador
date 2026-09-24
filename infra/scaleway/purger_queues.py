@@ -8,7 +8,7 @@ crasher le traitement → retry → DLQ). Purge la queue principale ET sa DLQ.
 (sinon `PurgeQueueInProgress`).
 
 Credentials MnQ : `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` (distincts des clés S3).
-Chargés depuis l'environnement — typiquement `source infra/scaleway/.secrets.env`.
+Chargés depuis l'environnement — typiquement `source ~/.config/mirador/secrets.env`.
 Endpoint par défaut : https://sqs.mnq.fr-par.scaleway.com (SQS_ENDPOINT_URL).
 
 Usage :
@@ -33,7 +33,7 @@ def _client():
     except KeyError as exc:
         sys.exit(
             f"❌ {exc.args[0]} manquant. Charge les credentials MnQ d'abord :\n"
-            f"   set -a && . infra/scaleway/.secrets.env && set +a"
+            f"   set -a && . ~/.config/mirador/secrets.env && set +a"
         )
     return boto3.client(
         "sqs", endpoint_url=ENDPOINT, region_name=REGION,

@@ -4,7 +4,7 @@
 # branche le trigger SQS. Pour les mises à jour de code seules → update_code.sh
 # (ou le workflow GitHub Actions).
 #
-# Prérequis : infra/scaleway/.secrets.env rempli (voir README.md § Variables).
+# Prérequis : ~/.config/mirador/secrets.env rempli (voir README.md § Variables).
 # Usage : ./deploy.sh
 set -euo pipefail
 
@@ -14,9 +14,10 @@ PROJECT_ID="${MIRADOR_PROJECT_ID:-4135267b-fd5a-4079-b716-8b24240deabd}"
 NAMESPACE="mirador"
 RUNTIME="python312"
 ICI="$(cd "$(dirname "$0")" && pwd)"
+SECRETS="${MIRADOR_SECRETS:-$HOME/.config/mirador/secrets.env}"  # hors dépôt (voir README § Variables)
 
 # shellcheck source=/dev/null
-[ -f "$ICI/.secrets.env" ] && set -a && . "$ICI/.secrets.env" && set +a
+[ -f "$SECRETS" ] && set -a && . "$SECRETS" && set +a
 
 scw() {
   if [ -n "$PROFILE" ]; then command scw --profile "$PROFILE" "$@"; else command scw "$@"; fi

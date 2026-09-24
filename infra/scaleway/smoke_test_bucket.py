@@ -4,9 +4,9 @@ Valide, contre le VRAI bucket, ce que les tests à doubles ne peuvent pas :
 authentification, permissions IAM, endpoint, format SQLite persisté, checksum.
 
 Le bucket doit préexister (créé dans le projet MIRADOR). Credentials + config
-lus depuis l'environnement — source `infra/scaleway/.secrets.env` avant de lancer :
+lus depuis l'environnement — source `~/.config/mirador/secrets.env` avant de lancer :
 
-    set -a; . infra/scaleway/.secrets.env; set +a
+    set -a; . ~/.config/mirador/secrets.env; set +a
     export BUCKET_NAME=telemach-mirador-audit \
            S3_ENDPOINT_URL=https://s3.fr-par.scw.cloud AWS_REGION=fr-par
     python infra/scaleway/smoke_test_bucket.py

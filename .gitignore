@@ -28,3 +28,10 @@ mirador-depots.json
 # Fichiers swap d'éditeur (jamais dans le dépôt — peuvent contenir des secrets)
 *.swp
 *.swo
+
+# Fichiers de verrou / sauvegarde d'Emacs
+\#*\#
+.\#*
+
+# Tout fichier .env nommé « secret(s) », avec ou sans point initial
+*secret*.env*

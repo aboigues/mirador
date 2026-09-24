@@ -1,0 +1,9 @@
+# Configuration gitleaks : règles par défaut + exceptions justifiées.
+# Utilisée par le hook pre-commit (.pre-commit-config.yaml) et le job CI `secrets`.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Manifests de démonstration copiés du dépôt public kubernetes-formation"
+paths = ['''^tests/fixtures/kubernetes-formation-contexte-depot\.txt$''']
