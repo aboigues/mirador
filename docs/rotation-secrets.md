@@ -12,19 +12,27 @@ a eu — un accès en lecture ; mais tant que les valeurs sont valides, elles so
 **Seule la rotation règle le problème.** Une fois les secrets tournés, le blob ne vaut plus
 rien, qu'il soit encore accessible ou non.
 
+**Mise à jour du 2026-09-24** : le blob n'était atteignable que par `refs/pull/17/head`,
+une ref en lecture seule qu'un force-push ne peut pas réécrire. Accès vérifiés : aucun
+collaborateur, fork, deploy key ou token fine-grained en dehors du propriétaire, seulement des
+Apps de confiance. Le dépôt a été republié à neuf (seul `master`, dont l'historique ne
+contient pas le blob) et l'ancien dépôt supprimé : les refs de PR et les objets orphelins
+ont disparu avec lui. La rotation reste recommandée par hygiène.
+
 ## Portée
 
 | Secret | Exposé | Ce qu'il ouvre |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | ✅ | Facturation API Claude |
-| `GITHUB_APP_PRIVATE_KEY` | ✅ | **Identité de la GitHub App** sur les 38 dépôts de l'installation |
+| `GITHUB_APP_PRIVATE_KEY` | ✅ | **Identité de la GitHub App** sur les dépôts de l'installation |
 | `WEBHOOK_SECRET` | ✅ | Forger des webhooks signés → faire agir Mirador |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | ✅ | Bucket d'audit (`SCW0C45PRGYFEYX53AN8`, app IAM `mirador`) |
 | `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` | ✅ | File de messages (credential `mirador`, `39cdedeb`) |
 | `SCW_ACCESS_KEY` / `SCW_SECRET_KEY` / `SCW_PROJECT_ID` | ❌ | **Non exposées** — créées après (PR #14). Ne pas y toucher. |
 
 Le plus grave est la **clé privée de la GitHub App** : elle permet de s'authentifier comme
-Mirador sur les 38 dépôts de l'installation 145689603, avec droits d'écriture (PR, issues).
+Mirador sur les dépôts de l'installation 145689603, avec droits d'écriture (PR, issues).
+L'installation est restreinte aux seuls dépôts surveillés (2026-09-24 ; 38 auparavant).
 
 ## Principe
 
@@ -207,6 +215,8 @@ Faire l'opération à un moment calme (pas pendant un scan hebdomadaire, cf. cro
 matin), pour réduire la fenêtre à néant.
 
 ## 6. Purger les objets orphelins chez GitHub
+
+> ✅ Sans objet depuis le 2026-09-24 : le dépôt a été recréé et l'ancien supprimé (voir en tête).
 
 Aucune commande ne le permet : les objets sont côté serveur, un `git gc` local n'y change
 rien. Ouvrir un ticket au **support GitHub** en demandant explicitement le *garbage
