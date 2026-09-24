@@ -13,7 +13,7 @@ set -euo pipefail
 PROFILE="${SCW_PROFILE:-telemach}"
 REGION="${SCW_REGION:-fr-par}"
 PROJECT_ID="${MIRADOR_PROJECT_ID:-4135267b-fd5a-4079-b716-8b24240deabd}"  # projet MIRADOR
-SECRETS_FILE="$(dirname "$0")/.secrets.env"   # ignoré par git
+SECRETS_FILE="${MIRADOR_SECRETS:-$HOME/.config/mirador/secrets.env}"  # hors dépôt
 
 scw() { command scw --profile "$PROFILE" "$@"; }
 
@@ -27,11 +27,13 @@ CREDS_JSON="$(scw mnq sqs create-credentials name=mirador project-id="$PROJECT_I
   region="$REGION" -o json)"
 AK="$(echo "$CREDS_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_key"])')"
 SK="$(echo "$CREDS_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["secret_key"])')"
+install -d -m 700 "$(dirname "$SECRETS_FILE")"
+(umask 077
 {
   echo "# Credentials MnQ (SQS) — NE PAS COMMITER"
   echo "MNQ_ACCESS_KEY=$AK"
   echo "MNQ_SECRET_KEY=$SK"
-} > "$SECRETS_FILE"
+} > "$SECRETS_FILE")
 echo "   credentials MnQ écrites dans $SECRETS_FILE (access_key: $AK)"
 
 echo "== 3. Queues standard (mirador-webhooks, mirador-writes + DLQ) =="

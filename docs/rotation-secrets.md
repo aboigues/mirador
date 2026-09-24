@@ -50,7 +50,7 @@ Valider *avant* de déployer évite de découvrir une clé fautive en production
 
 ```bash
 # Depuis la racine du dépôt, avec les NOUVELLES valeurs en variables d'env.
-set -a && . infra/scaleway/.secrets.env && set +a   # miroir local, à jour
+set -a && . ~/.config/mirador/secrets.env && set +a   # miroir local, à jour
 .venv/bin/python infra/scaleway/verifier_secrets.py
 ```
 
@@ -228,7 +228,10 @@ Anthropic (cf. la résilience de la PR #19).
 
 ## Après coup
 
-- Le `.gitignore` couvre désormais `*.swp` / `*.swo` et `**/.secrets.env*` (PR #20) : le même
-  accident ne peut plus se reproduire par cette voie.
-- Penser à mettre à jour le miroir local `infra/scaleway/.secrets.env` — il sert aux repros
+- Le `.gitignore` couvre désormais `*.swp` / `*.swo` et `**/.secrets.env*` (PR #20).
+- Le miroir local a quitté le dépôt : `~/.config/mirador/secrets.env`. Il n'y a plus de
+  fichier de secrets dans l'arbre de travail, donc plus rien à commiter par erreur.
+- gitleaks bloque tout secret au commit (hook `pre-commit`) et au push (job CI
+  `secrets`). Voir le README § Sécurité.
+- Penser à mettre à jour le miroir local `~/.config/mirador/secrets.env` — il sert aux repros
   locales, mais **n'est plus la source de vérité** (ce sont les Variables/Secrets GitHub).

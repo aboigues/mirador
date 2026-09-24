@@ -10,7 +10,7 @@
 # Ne touche PAS aux variables d'environnement / secrets des fonctions (posés une
 # fois par deploy.sh). Idempotent : relançable sans effet de bord (hors purge).
 #
-# Prérequis : infra/scaleway/.secrets.env rempli, profil scw `telemach`.
+# Prérequis : ~/.config/mirador/secrets.env rempli, profil scw `telemach`.
 # Usage :
 #   ./redeploy.sh            # redéploie puis demande confirmation avant de purger
 #   ./redeploy.sh --sans-purge   # redéploie seulement
@@ -22,6 +22,7 @@ REGION="${SCW_REGION:-fr-par}"
 PROJECT_ID="${MIRADOR_PROJECT_ID:-4135267b-fd5a-4079-b716-8b24240deabd}"
 NAMESPACE="mirador"
 ICI="$(cd "$(dirname "$0")" && pwd)"
+SECRETS="${MIRADOR_SECRETS:-$HOME/.config/mirador/secrets.env}"  # hors dépôt (voir README § Variables)
 
 PURGE="demander"
 for arg in "$@"; do
@@ -32,13 +33,13 @@ for arg in "$@"; do
   esac
 done
 
-# Charge .secrets.env (nécessaire pour les credentials MnQ de la purge).
-if [ ! -f "$ICI/.secrets.env" ]; then
-  echo "❌ $ICI/.secrets.env introuvable (voir README.md § Variables)." >&2
+# Charge le fichier de secrets (nécessaire pour les credentials MnQ de la purge).
+if [ ! -f "$SECRETS" ]; then
+  echo "❌ $SECRETS introuvable (voir README.md § Variables)." >&2
   exit 1
 fi
 # shellcheck source=/dev/null
-set -a && . "$ICI/.secrets.env" && set +a
+set -a && . "$SECRETS" && set +a
 
 scw() {
   if [ -n "$PROFILE" ]; then command scw --profile "$PROFILE" "$@"; else command scw "$@"; fi
@@ -94,7 +95,7 @@ cat <<EOF
    # Logs de la fonction traitement (remonter les erreurs éventuelles) :
    scw --profile $PROFILE function function logs function-id=$TRAITEMENT_ID region=$REGION
    # Profondeur des queues (doit revenir à 0 après traitement) :
-   set -a && . $ICI/.secrets.env && set +a
+   set -a && . $SECRETS && set +a
    python3 -c "import boto3,os;s=boto3.client('sqs',endpoint_url=os.environ['SQS_ENDPOINT_URL'],region_name='$REGION',aws_access_key_id=os.environ['MNQ_ACCESS_KEY'],aws_secret_access_key=os.environ['MNQ_SECRET_KEY']);print(s.get_queue_attributes(QueueUrl=os.environ['SQS_QUEUE_URL'],AttributeNames=['ApproximateNumberOfMessages'])['Attributes'])"
    # Issues ouvertes par Mirador :
    gh issue list --repo aboigues/k8t --label mirador

@@ -64,6 +64,9 @@ Sur la page de l'App fraîchement créée :
 openssl rsa -in mirador.YYYY-MM-DD.private-key.pem -check -noout
 ```
 
+> 🔒 Ranger le `.pem` **hors du dépôt** (`~/.config/mirador/`, fichier `600`) —
+> jamais dans `infra/github-app/`.
+
 ---
 
 ## 3. Installer l'App sur le dépôt de test

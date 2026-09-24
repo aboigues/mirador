@@ -148,6 +148,21 @@ Pour que `/approuver` puisse matérialiser un correctif de dépendances, copier 
 
 ---
 
+## Sécurité des secrets
+
+- **Aucun secret dans l'arbre de travail.** Le miroir local vit dans
+  `~/.config/mirador/secrets.env` (surchargeable par `MIRADOR_SECRETS`), la clé de la
+  GitHub App dans `~/.config/mirador/*.pem`. La source de vérité reste les
+  Secrets/Variables GitHub Actions.
+- **Hook pre-commit gitleaks**, à installer une fois par clone :
+  `pip install -e ".[dev]" && pre-commit install`. Il refuse tout commit contenant un
+  secret, quel que soit le nom du fichier.
+- **Job CI `secrets`** : gitleaks rescanne tout l'historique à chaque push. C'est le filet
+  si le hook a été contourné (`--no-verify`) ou n'est pas installé.
+- Exceptions justifiées : `.gitleaks.toml`.
+- Limite connue : la configuration par défaut de gitleaks ne lit pas certaines extensions
+  binaires (`.bin`, images…). Les swap vim, `.dat`, `.db` et `.sqlite` sont bien analysés.
+
 ## Périmètre v1
 
 Quelques dépôts GitHub surveillés simultanément. Interventions limitées à la relance de workflow et à l'ouverture de PR — **aucun commit direct** (Principe III).
