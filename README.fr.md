@@ -165,6 +165,8 @@ Pour que `/approuver` puisse matérialiser un correctif de dépendances, copier 
 - Limite connue : la configuration par défaut de gitleaks ne lit pas certaines extensions
   binaires (`.bin`, images…). Les swap vim, `.dat`, `.db` et `.sqlite` sont bien analysés.
 
+Pour signaler une vulnérabilité, voir [SECURITY.md](SECURITY.md#politique-de-sécurité) — en privé, jamais dans une issue publique.
+
 ## Périmètre v1
 
 Quelques dépôts GitHub surveillés simultanément. Interventions limitées à la relance de workflow et à l'ouverture de PR — **aucun commit direct** (Principe III).

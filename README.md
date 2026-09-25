@@ -167,6 +167,8 @@ For `/approuver` to materialise a dependency fix, copy `infra/depot-surveille/mi
 - Known limitation: gitleaks' default configuration skips some binary extensions
   (`.bin`, images…). Vim swap files, `.dat`, `.db` and `.sqlite` are scanned.
 
+To report a vulnerability, see [SECURITY.md](SECURITY.md) — privately, never in a public issue.
+
 ## v1 scope
 
 A few GitHub repositories monitored simultaneously. Interventions are limited to rerunning workflows and opening PRs — **never a direct commit** (Principle III).
