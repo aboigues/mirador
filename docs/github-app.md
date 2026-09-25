@@ -147,11 +147,11 @@ et les livraisons suivantes avec leur code de réponse.
 | `GITHUB_APP_PRIVATE_KEY` | contenu du `.pem` (§ 2) |
 | `WEBHOOK_SECRET` | `openssl rand -hex 32` (§ 1) |
 | `ANTHROPIC_API_KEY` | console Anthropic |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | clés API Scaleway (S3 + MnQ) |
+| `SCW_S3_ACCESS_KEY` / `SCW_S3_SECRET_KEY` | clé API Scaleway du bucket (voir `infra/scaleway/README.md`) |
 | `BUCKET_NAME` | bucket Object Storage (provisioning à venir) |
 | `SQS_QUEUE_URL` | queue `mirador-webhooks` (provisioning à venir) |
 | `S3_ENDPOINT_URL` | `https://s3.fr-par.scw.cloud` |
-| `AWS_REGION` | `fr-par` |
+| `SCW_REGION` | `fr-par` |
 | `MIRADOR_DEPOTS` | § 4 |
 
 > 🔒 Le `.pem` et le webhook secret ne doivent **jamais** être commités. Le

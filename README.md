@@ -123,13 +123,13 @@ Développement en **TDD strict** : le test échoue avant que le code existe.
 
 La source de vérité de la configuration est constituée des **Variables et Secrets GitHub Actions** du dépôt (Settings → Secrets and variables → Actions).
 
-Variables (non sensibles) : `MIRADOR_DEPOTS`, `BUCKET_NAME`, `S3_ENDPOINT_URL`, `SQS_ENDPOINT_URL`, `SQS_QUEUE_URL`, `AWS_REGION`, `APP_ID`.
+Variables (non sensibles) : `MIRADOR_DEPOTS`, `BUCKET_NAME`, `S3_ENDPOINT_URL`, `SQS_ENDPOINT_URL`, `SQS_QUEUE_URL`, `SCW_REGION`, `APP_ID`.
 
-Secrets : `APP_PRIVATE_KEY`, `WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `MNQ_ACCESS_KEY`, `MNQ_SECRET_KEY`, plus `SCW_ACCESS_KEY`, `SCW_SECRET_KEY`, `SCW_PROJECT_ID` pour le déploiement.
+Secrets : `APP_PRIVATE_KEY`, `WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `SCW_S3_ACCESS_KEY`, `SCW_S3_SECRET_KEY`, `MNQ_ACCESS_KEY`, `MNQ_SECRET_KEY`, plus `SCW_DEPLOY_ACCESS_KEY`, `SCW_DEPLOY_SECRET_KEY`, `SCW_PROJECT_ID` pour le déploiement.
 
 > Le préfixe `GITHUB_` est réservé par GitHub Actions. D'où `APP_ID` / `APP_PRIVATE_KEY` côté GitHub, que `deploy-config.yml` remappe en `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` côté Scaleway.
 
-> Les credentials MnQ (`MNQ_*`, file de messages) sont **distinctes** des credentials Object Storage (`AWS_*`, bucket). Ce ne sont pas les mêmes clés.
+> Les credentials MnQ (`MNQ_*`, file de messages) sont **distinctes** des credentials Object Storage (`SCW_S3_*`, bucket) et de la clé de déploiement (`SCW_DEPLOY_*`, CI). Ce sont trois jeux de clés différents, tous chez Scaleway.
 
 ### Surveiller un nouveau dépôt
 

@@ -20,8 +20,10 @@ concurrency:
 
 env:
   SCW_VERSION: "2.56.3"
-  SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
-  SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+  # Clé IAM de l'application `mirador-deploy` (Functions seulement), exposée sous
+  # les noms qu'attend la CLI scw.
+  SCW_ACCESS_KEY: ${{ secrets.SCW_DEPLOY_ACCESS_KEY }}
+  SCW_SECRET_KEY: ${{ secrets.SCW_DEPLOY_SECRET_KEY }}
   SCW_DEFAULT_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
   # Org id : identifiant non sensible, requis par certaines commandes scw (ex.
   # `function namespace list`) quand aucun fichier de config n'est présent (CI).

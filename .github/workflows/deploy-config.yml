@@ -31,8 +31,10 @@ concurrency:
 
 env:
   SCW_VERSION: "2.56.3"
-  SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
-  SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+  # Clé IAM de l'application `mirador-deploy` (Functions seulement), exposée sous
+  # les noms qu'attend la CLI scw.
+  SCW_ACCESS_KEY: ${{ secrets.SCW_DEPLOY_ACCESS_KEY }}
+  SCW_SECRET_KEY: ${{ secrets.SCW_DEPLOY_SECRET_KEY }}
   SCW_DEFAULT_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
   SCW_DEFAULT_ORGANIZATION_ID: 0a3e5b10-4caa-4048-a607-f53080c01569
   SCW_DEFAULT_REGION: fr-par
@@ -92,7 +94,7 @@ jobs:
           S3_ENDPOINT_URL: ${{ vars.S3_ENDPOINT_URL }}
           SQS_ENDPOINT_URL: ${{ vars.SQS_ENDPOINT_URL }}
           SQS_QUEUE_URL: ${{ vars.SQS_QUEUE_URL }}
-          AWS_REGION: ${{ vars.AWS_REGION }}
+          SCW_REGION: ${{ vars.SCW_REGION }}
           MIRADOR_DEPOTS: ${{ vars.MIRADOR_DEPOTS }}
           # Le préfixe GITHUB_ est réservé par GitHub Actions : les Variables et
           # Secrets s'appellent APP_ID / APP_PRIVATE_KEY, mais le runtime attend
@@ -102,8 +104,8 @@ jobs:
           GITHUB_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SCW_S3_ACCESS_KEY: ${{ secrets.SCW_S3_ACCESS_KEY }}
+          SCW_S3_SECRET_KEY: ${{ secrets.SCW_S3_SECRET_KEY }}
           MNQ_ACCESS_KEY: ${{ secrets.MNQ_ACCESS_KEY }}
           MNQ_SECRET_KEY: ${{ secrets.MNQ_SECRET_KEY }}
           CHOIX: ${{ inputs.fonctions }}
@@ -122,14 +124,14 @@ jobs:
             "environment-variables.S3_ENDPOINT_URL=${S3_ENDPOINT_URL:?Variable S3_ENDPOINT_URL requise}"
             "environment-variables.SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:?Variable SQS_ENDPOINT_URL requise}"
             "environment-variables.SQS_QUEUE_URL=${SQS_QUEUE_URL:?Variable SQS_QUEUE_URL requise}"
-            "environment-variables.AWS_REGION=${AWS_REGION:?Variable AWS_REGION requise}"
+            "environment-variables.SCW_REGION=${SCW_REGION:?Variable SCW_REGION requise}"
             "environment-variables.GITHUB_APP_ID=${GITHUB_APP_ID:?Variable APP_ID requise}"
             "environment-variables.MIRADOR_DEPOTS=${MIRADOR_DEPOTS:?Variable MIRADOR_DEPOTS requise}"
           )
 
           # Map des secrets : séparée de la précédente, reposée en entier aussi.
           _SECRETS=(WEBHOOK_SECRET ANTHROPIC_API_KEY GITHUB_APP_PRIVATE_KEY
-                    AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY)
+                    SCW_S3_ACCESS_KEY SCW_S3_SECRET_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY)
           SECRET_ARGS=(); i=0
           for nom in "${_SECRETS[@]}"; do
             SECRET_ARGS+=("secret-environment-variables.$i.key=$nom"

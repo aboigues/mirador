@@ -8,7 +8,7 @@ lus depuis l'environnement — source `~/.config/mirador/secrets.env` avant de l
 
     set -a; . ~/.config/mirador/secrets.env; set +a
     export BUCKET_NAME=telemach-mirador-audit \
-           S3_ENDPOINT_URL=https://s3.fr-par.scw.cloud AWS_REGION=fr-par
+           S3_ENDPOINT_URL=https://s3.fr-par.scw.cloud SCW_REGION=fr-par
     python infra/scaleway/smoke_test_bucket.py
 
 Note : la clé runtime n'ayant pas ObjectStorageObjectsDelete (immutabilité),
@@ -43,7 +43,7 @@ def _evenement(correlation_id, statut: str) -> EvenementJournal:
 
 
 def main() -> int:
-    bucket = ClientBucketS3()  # BUCKET_NAME + AWS_* depuis l'environnement
+    bucket = ClientBucketS3()  # BUCKET_NAME + SCW_S3_* depuis l'environnement
     writer = WriterAudit(bucket, cle_bd=CLE)
     depot = DepotJournal(bucket, cle_bd=CLE)
     correlation_id = uuid4()

@@ -8,7 +8,7 @@ Queues STANDARD (non FIFO) : les triggers scw_sqs de Scaleway Functions ne
 consomment pas les files FIFO. La déduplication est assurée côté consommateur
 (idempotence par delivery_id dans le pipeline de traitement).
 
-Credentials : via l'environnement (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY),
+Credentials : via l'environnement (MNQ_ACCESS_KEY / MNQ_SECRET_KEY),
 ou un fichier JSON de credentials MnQ passé en argument (clés access_key/secret_key).
 Endpoint par défaut : https://sqs.mnq.fr-par.scaleway.com (surchargeable par SQS_ENDPOINT_URL).
 
@@ -24,7 +24,7 @@ import sys
 import boto3
 
 ENDPOINT = os.environ.get("SQS_ENDPOINT_URL", "https://sqs.mnq.fr-par.scaleway.com")
-REGION = os.environ.get("AWS_REGION", "fr-par")
+REGION = os.environ.get("SCW_REGION", "fr-par")
 MAX_RECEIVE_COUNT = 3
 RETENTION = "86400"  # 24 h
 
@@ -42,7 +42,11 @@ def _client():
             "sqs", endpoint_url=ENDPOINT, region_name=REGION,
             aws_access_key_id=creds["access_key"], aws_secret_access_key=creds["secret_key"],
         )
-    return boto3.client("sqs", endpoint_url=ENDPOINT, region_name=REGION)
+    return boto3.client(
+        "sqs", endpoint_url=ENDPOINT, region_name=REGION,
+        aws_access_key_id=os.environ["MNQ_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["MNQ_SECRET_KEY"],
+    )
 
 
 def _creer(sqs, nom: str, attributs: dict[str, str]) -> tuple[str, str]:
