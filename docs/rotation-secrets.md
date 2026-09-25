@@ -248,6 +248,6 @@ Anthropic (cf. la résilience de la PR #19).
 - Le miroir local a quitté le dépôt : `~/.config/mirador/secrets.env`. Il n'y a plus de
   fichier de secrets dans l'arbre de travail, donc plus rien à commiter par erreur.
 - gitleaks bloque tout secret au commit (hook `pre-commit`) et au push (job CI
-  `secrets`). Voir le README § Sécurité.
+  `secrets`). Voir `README.fr.md` § Sécurité des secrets.
 - Penser à mettre à jour le miroir local `~/.config/mirador/secrets.env` — il sert aux repros
   locales, mais **n'est plus la source de vérité** (ce sont les Variables/Secrets GitHub).
