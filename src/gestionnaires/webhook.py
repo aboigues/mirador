@@ -32,7 +32,7 @@ async def enqueuer_sqs(message: dict[str, Any], env: Optional[dict[str, str]] = 
     sqs = boto3.client(
         "sqs",
         endpoint_url=env.get("SQS_ENDPOINT_URL", _SQS_ENDPOINT_DEFAUT),
-        region_name=env.get("SCW_REGION", "fr-par"),
+        region_name=env.get("SCALEWAY_REGION", "fr-par"),
         aws_access_key_id=env["MNQ_ACCESS_KEY"],
         aws_secret_access_key=env["MNQ_SECRET_KEY"],
     )

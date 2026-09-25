@@ -51,8 +51,8 @@ sérialisées via la queue `mirador-writes` (writer unique, ~€0,02/mois)
 **Contraintes** :
 - Stateless entre invocations (serverless scale-to-zero)
 - 1 à 5 dépôts surveillés simultanément (périmètre v1)
-- Secrets (GITHUB_APP_PRIVATE_KEY, WEBHOOK_SECRET, BUCKET_NAME, SCW_S3_ACCESS_KEY,
-  SCW_S3_SECRET_KEY) en variables d'env chiffrées Scaleway Serverless
+- Secrets (GITHUB_APP_PRIVATE_KEY, WEBHOOK_SECRET, BUCKET_NAME, SCALEWAY_S3_ACCESS_KEY,
+  SCALEWAY_S3_SECRET_KEY) en variables d'env chiffrées Scaleway Serverless
 
 **Périmètre/Échelle** : 1-5 dépôts, POC/usage personnel, GitHub Actions uniquement
 

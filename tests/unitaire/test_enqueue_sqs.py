@@ -2,7 +2,7 @@
 
 Découvert au provisioning réel : MnQ (SQS) exige ses propres credentials,
 distincts des clés IAM utilisées pour Object Storage (S3). L'enqueue doit donc
-utiliser MNQ_ACCESS_KEY / MNQ_SECRET_KEY, pas les SCW_S3_* du bucket.
+utiliser MNQ_ACCESS_KEY / MNQ_SECRET_KEY, pas les SCALEWAY_S3_* du bucket.
 """
 import boto3
 import pytest

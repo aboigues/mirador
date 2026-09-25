@@ -54,12 +54,12 @@ class ClientBucketS3:
             else os.environ.get("S3_ENDPOINT_URL", "https://s3.fr-par.scw.cloud")
         )
         parametres: dict[str, str] = {
-            "region_name": region_name or os.environ.get("SCW_REGION", "fr-par"),
+            "region_name": region_name or os.environ.get("SCALEWAY_REGION", "fr-par"),
         }
         # Clé IAM dédiée au bucket, passée explicitement. Absente (tests sous moto,
         # ou fonction pas encore reconfigurée), boto3 retombe sur sa chaîne de
         # credentials habituelle.
-        cle, secret = os.environ.get("SCW_S3_ACCESS_KEY"), os.environ.get("SCW_S3_SECRET_KEY")
+        cle, secret = os.environ.get("SCALEWAY_S3_ACCESS_KEY"), os.environ.get("SCALEWAY_S3_SECRET_KEY")
         if cle and secret:
             parametres["aws_access_key_id"] = cle
             parametres["aws_secret_access_key"] = secret
