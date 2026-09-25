@@ -14,7 +14,9 @@ name: Configuration Scaleway (env + secrets)
 #
 # ⚠️ `scw function function update environment-variables.X=…` REMPLACE toute la
 # map. Les 7 variables sont donc TOUJOURS reposées ensemble — ne jamais n'en
-# passer qu'une. Idem pour les secrets, qui vivent dans une map séparée.
+# passer qu'une. Les SECRETS, eux, sont FUSIONNÉS clé par clé : un secret absent
+# de la requête reste en place. Le workflow supprime donc explicitement (clé sans
+# valeur) tout secret présent sur la fonction mais absent de SECRETS_FONCTIONS.
 #
 # ⚠️ Aucune variable de fonction ne peut commencer par SCW_ (préfixe réservé par
 # Scaleway) : d'où SCALEWAY_REGION / SCALEWAY_S3_*. La clé de déploiement, qui ne
@@ -43,6 +45,10 @@ env:
   SCW_DEFAULT_ORGANIZATION_ID: 0a3e5b10-4caa-4048-a607-f53080c01569
   SCW_DEFAULT_REGION: fr-par
   SCW_PROFILE: ""
+  # Secrets posés sur les fonctions. Tout autre secret trouvé est supprimé.
+  SECRETS_FONCTIONS: >-
+    WEBHOOK_SECRET ANTHROPIC_API_KEY GITHUB_APP_PRIVATE_KEY
+    SCALEWAY_S3_ACCESS_KEY SCALEWAY_S3_SECRET_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY
 
 # Moindre privilège : le GITHUB_TOKEN ne fait que lire le dépôt (checkout).
 permissions:
@@ -133,9 +139,8 @@ jobs:
             "environment-variables.MIRADOR_DEPOTS=${MIRADOR_DEPOTS:?Variable MIRADOR_DEPOTS requise}"
           )
 
-          # Map des secrets : séparée de la précédente, reposée en entier aussi.
-          _SECRETS=(WEBHOOK_SECRET ANTHROPIC_API_KEY GITHUB_APP_PRIVATE_KEY
-                    SCALEWAY_S3_ACCESS_KEY SCALEWAY_S3_SECRET_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY)
+          # Map des secrets : séparée de la précédente, et fusionnée (voir en-tête).
+          read -ra _SECRETS <<< "$SECRETS_FONCTIONS"
           SECRET_ARGS=(); i=0
           for nom in "${_SECRETS[@]}"; do
             SECRET_ARGS+=("secret-environment-variables.$i.key=$nom"
@@ -161,25 +166,47 @@ jobs:
             FN_ID=$(scw function function list namespace-id="$NS_ID" region="$SCW_DEFAULT_REGION" -o json \
               | python3 -c "import sys,json;print(next(f['id'] for f in json.load(sys.stdin) if f['name']=='$fn'))")
             echo "→ configuration de $fn ($FN_ID)"
+            # Secrets obsolètes : présents sur la fonction, absents de la liste
+            # attendue. Une clé sans valeur les supprime (seules les clés sont lues).
+            OBSOLETES=$(scw function function get function-id="$FN_ID" region="$SCW_DEFAULT_REGION" -o json \
+              | python3 -c "import sys,json,os;att=set(os.environ['SECRETS_FONCTIONS'].split());print(' '.join(sorted({s['key'] for s in json.load(sys.stdin).get('secret_environment_variables') or []}-att)))")
+            FN_SECRET_ARGS=("${SECRET_ARGS[@]}"); j=$i
+            for nom in $OBSOLETES; do
+              FN_SECRET_ARGS+=("secret-environment-variables.$j.key=$nom"); j=$((j+1))
+            done
+            [ -z "$OBSOLETES" ] || echo "   secrets obsolètes supprimés : $OBSOLETES"
             # Sortie jetée : la réponse contient la map d'env en clair.
             scw function function update function-id="$FN_ID" region="$SCW_DEFAULT_REGION" \
-              "${ENV_ARGS[@]}" "${SECRET_ARGS[@]}" >/dev/null
+              "${ENV_ARGS[@]}" "${FN_SECRET_ARGS[@]}" >/dev/null
             scw function function deploy function-id="$FN_ID" region="$SCW_DEFAULT_REGION" >/dev/null
             echo "   ✓ $fn configurée et redéployée"
           done
 
-      - name: Vérifier les clés posées (sans les valeurs)
+      - name: Vérifier l'état des fonctions et les clés posées (sans les valeurs)
         run: |
           set -euo pipefail
           NS_ID=$(scw function namespace list project-id="$SCW_DEFAULT_PROJECT_ID" region="$SCW_DEFAULT_REGION" -o json \
             | python3 -c "import sys,json;print(next(n['id'] for n in json.load(sys.stdin) if n['name']=='mirador'))")
-          scw function function list namespace-id="$NS_ID" region="$SCW_DEFAULT_REGION" -o json \
-            | python3 -c "
-          import sys, json
-          for f in json.load(sys.stdin):
-              env = sorted((f.get('environment_variables') or {}).keys())
-              sec = sorted(s.get('key') for s in (f.get('secret_environment_variables') or []))
-              print(f\"{f['name']}: status={f['status']}\")
-              print(f\"   env    : {env}\")
-              print(f\"   secrets: {sec}\")
-          "
+          # Le redéploiement est asynchrone : attendre que plus aucune fonction ne
+          # soit en transition (pending, creating…), 10 min au plus.
+          for tentative in $(seq 1 40); do
+            scw function function list namespace-id="$NS_ID" region="$SCW_DEFAULT_REGION" -o json > fonctions.json
+            python3 -c "import json,sys;sys.exit(any(f['status'] not in ('ready','error') for f in json.load(open('fonctions.json'))))" && break
+            sleep 15
+          done
+          python3 - <<'PY'
+          import json, os, sys
+          attendus = sorted(os.environ["SECRETS_FONCTIONS"].split())
+          echec = False
+          for f in json.load(open("fonctions.json")):
+              env = sorted((f.get("environment_variables") or {}).keys())
+              sec = sorted(s.get("key") for s in (f.get("secret_environment_variables") or []))
+              print(f"{f['name']}: status={f['status']}")
+              print(f"   env    : {env}")
+              print(f"   secrets: {sec}")
+              if f["status"] != "ready":
+                  print(f"::error::{f['name']} n'est pas ready ({f['status']})"); echec = True
+              if sec != attendus:
+                  print(f"::error::{f['name']} : secrets {sec} ≠ attendus {attendus}"); echec = True
+          sys.exit(echec)
+          PY
