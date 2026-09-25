@@ -1,10 +1,14 @@
+🇬🇧 **English** | [🇫🇷 Français](README.fr.md)
+
 # Mirador
 
-Surveillance autonome de pipelines CI/CD GitHub Actions avec agents IA.
+Autonomous monitoring of GitHub Actions CI/CD pipelines with AI agents.
 
-Mirador écoute les événements GitHub Actions, détecte les anomalies, les classe par niveau de risque et applique des corrections automatiques — ou escalade vers validation humaine pour les cas critiques.
+Mirador listens to GitHub Actions events, detects anomalies, classifies them by risk level and applies automatic fixes — or escalates to human validation for critical cases.
 
-**État** : déployé et validé de bout en bout en production sur des dépôts réels — détection d'un échec, ouverture d'une Issue portant la correction proposée, puis `/approuver` qui matérialise une vraie pull request.
+**Status**: deployed and validated end-to-end in production on real repositories — a failure is detected, an Issue carrying the proposed fix is opened, then `/approuver` turns it into an actual pull request.
+
+> The bot's commands and messages are in French (`/approuver` = approve, `/rejeter` = reject).
 
 ---
 
@@ -12,47 +16,47 @@ Mirador écoute les événements GitHub Actions, détecte les anomalies, les cla
 
 ```mermaid
 flowchart TD
-    GH["GitHub Actions<br/>(dépôts surveillés)"]
-    WH["fonction webhook<br/>POST /webhooks/github<br/>validation HMAC-SHA256"]
+    GH["GitHub Actions<br/>(monitored repositories)"]
+    WH["webhook function<br/>POST /webhooks/github<br/>HMAC-SHA256 validation"]
     MNQ["Scaleway MnQ<br/>mirador-webhooks (standard)"]
-    DLQ1["mirador-webhooks-dlq<br/>(3 tentatives max)"]
-    TRAIT["fonction traitement<br/>déclenchée par la file"]
+    DLQ1["mirador-webhooks-dlq<br/>(3 attempts max)"]
+    TRAIT["processing function<br/>triggered by the queue"]
 
     subgraph Agents["Agents"]
-        DET["Détecteur<br/>type + niveau de risque<br/>(règles, sans LLM)"]
-        SUP["Superviseur<br/>décision d'escalade"]
-        CORR["Correcteur<br/>analyse du log · Claude Haiku 4.5"]
+        DET["Detector<br/>type + risk level<br/>(rules, no LLM)"]
+        SUP["Supervisor<br/>escalation decision"]
+        CORR["Fixer<br/>log analysis · Claude Haiku 4.5"]
     end
 
-    subgraph Actions["Interventions (jamais de commit direct)"]
-        RELANCE["RELANCE<br/>relance du workflow"]
-        AUTOFIX["mirador-autofix.yml<br/>build réel dans le dépôt surveillé<br/>→ PR verte"]
-        PR["PULL_REQUEST<br/>branche + fichiers → PR"]
+    subgraph Actions["Interventions (never a direct commit)"]
+        RELANCE["RERUN<br/>workflow rerun"]
+        AUTOFIX["mirador-autofix.yml<br/>real build in the monitored repo<br/>→ green PR"]
+        PR["PULL_REQUEST<br/>branch + files → PR"]
     end
 
-    WRITER["Writer unique<br/>append-only · SQLite WAL"]
-    BUCKET[("Scaleway Object Storage<br/>mirador.db + checksum SHA-256")]
-    API["fonction API<br/>GET /etat · /historique"]
-    ISSUE["GitHub Issue<br/>anomalie + correction proposée<br/>/approuver · /rejeter"]
-    HUMAIN["Responsable humain"]
+    WRITER["Single writer<br/>append-only · SQLite WAL"]
+    BUCKET[("Scaleway Object Storage<br/>mirador.db + SHA-256 checksum")]
+    API["API function<br/>GET /etat · /historique"]
+    ISSUE["GitHub Issue<br/>anomaly + proposed fix<br/>/approuver · /rejeter"]
+    HUMAIN["Human owner"]
 
     GH -->|"workflow_run completed"| WH
-    WH -->|"202 — message enqueué"| MNQ
-    MNQ -->|"échec × 3"| DLQ1
+    WH -->|"202 — message enqueued"| MNQ
+    MNQ -->|"failure × 3"| DLQ1
     MNQ --> TRAIT
     TRAIT --> DET
     DET --> SUP
     SUP -->|"INFO"| WRITER
     SUP -->|"LOW"| CORR
     SUP -->|"MEDIUM / HIGH / CRITICAL"| CORR
-    CORR -->|"LOW : exécution immédiate"| RELANCE
-    CORR -->|"proposition persistée"| ISSUE
+    CORR -->|"LOW: immediate execution"| RELANCE
+    CORR -->|"persisted proposal"| ISSUE
     ISSUE --> HUMAIN
     HUMAIN -->|"issue_comment /approuver · /rejeter"| WH
-    WH -->|"/approuver → exécute la proposition persistée"| TRAIT
-    TRAIT -->|"deps → build réel"| AUTOFIX
-    TRAIT -->|"fichiers fournis"| PR
-    TRAIT -->|"RELANCE"| RELANCE
+    WH -->|"/approuver → runs the persisted proposal"| TRAIT
+    TRAIT -->|"deps → real build"| AUTOFIX
+    TRAIT -->|"files provided"| PR
+    TRAIT -->|"RERUN"| RELANCE
     RELANCE --> WRITER
     PR --> WRITER
     AUTOFIX --> WRITER
@@ -60,47 +64,47 @@ flowchart TD
     BUCKET --> API
 ```
 
-### Niveaux de risque et actions
+### Risk levels and actions
 
-Le niveau est décidé par le **Détecteur** (règles déterministes, sans appel LLM) ; le **Superviseur** en déduit l'action.
+The level is decided by the **Detector** (deterministic rules, no LLM call); the **Supervisor** derives the action from it.
 
-| Niveau | Déclencheur | Action |
+| Level | Trigger | Action |
 |--------|-------------|--------|
-| `INFO` | Événement normal | Journalisation uniquement |
-| `LOW` | Échec isolé, pattern connu | Intervention automatique immédiate |
-| `MEDIUM` | Échec inattendu | **Issue** + attente de validation |
-| `HIGH` | Timeout, ou impact sur la branche par défaut | **Issue** + attente de validation |
-| `CRITICAL` | Incident de production | **Issue** + attente de validation |
+| `INFO` | Normal event | Logging only |
+| `LOW` | Isolated failure, known pattern | Immediate automatic intervention |
+| `MEDIUM` | Unexpected failure | **Issue** + awaits validation |
+| `HIGH` | Timeout, or impact on the default branch | **Issue** + awaits validation |
+| `CRITICAL` | Production incident | **Issue** + awaits validation |
 
-`MEDIUM` ouvre bien une Issue, au même titre que `HIGH` et `CRITICAL` : la seule différence est la formulation. Seul `LOW` agit sans demander l'avis d'un humain.
+`MEDIUM` does open an Issue, just like `HIGH` and `CRITICAL`: only the wording differs. Only `LOW` acts without asking a human.
 
-### Boucle de validation humaine
+### Human validation loop
 
-1. L'escalade appelle le Correcteur, **persiste** sa proposition dans le journal d'audit, et ouvre une Issue qui l'affiche.
-2. Un responsable commente `/approuver` ou `/rejeter <motif>` — l'identité est vérifiée contre les `responsables` du dépôt.
-3. `/approuver` relit la proposition persistée et **l'exécute réellement** :
-   - **mise à jour de dépendances Go** → déclenche `mirador-autofix.yml` dans le dépôt surveillé, qui régénère `go.mod`/`go.sum` par un **vrai build** et ouvre la PR (seule voie pour un correctif qui passe la CI — `go.sum` n'est pas calculable sans build) ;
-   - **fichiers fournis** → crée la branche `mirador/fix-<run>`, écrit les fichiers, ouvre la PR ;
-   - sinon → PR documentaire (`MIRADOR-FIX.md`) à compléter par un humain.
-4. Si l'exécution échoue, l'approbation reste valable : l'issue est fermée avec un message honnête plutôt qu'un plantage.
+1. Escalation calls the Fixer, **persists** its proposal in the audit log, and opens an Issue showing it.
+2. An owner comments `/approuver` or `/rejeter <reason>` — the identity is checked against the repository's `responsables` (owners).
+3. `/approuver` reloads the persisted proposal and **actually executes it**:
+   - **Go dependency update** → triggers `mirador-autofix.yml` in the monitored repository, which regenerates `go.mod`/`go.sum` through a **real build** and opens the PR (the only way to get a fix that passes CI — `go.sum` cannot be computed without a build);
+   - **files provided** → creates the `mirador/fix-<run>` branch, writes the files, opens the PR;
+   - otherwise → documentation PR (`MIRADOR-FIX.md`) for a human to complete.
+4. If execution fails, the approval stands: the issue is closed with an honest message rather than crashing.
 
-**Si le Correcteur est indisponible** (panne API, crédits épuisés), l'Issue est ouverte **quand même**, en signalant « Analyse indisponible ». La détection ne dépend pas de la disponibilité de Claude.
-
----
-
-## Stack technique
-
-- **Runtime** : Python 3.12 — Scaleway Serverless Functions (scale-to-zero). Le runtime est **Alpine/musl** : les dépendances sont vendorisées en wheels `musllinux` dans le zip, car le déploiement bas-niveau ne construit pas `requirements.txt`.
-- **File de messages** : Scaleway MnQ (SQS-compatible, boto3) — `mirador-webhooks` + sa DLQ. File **standard**, pas FIFO : les triggers Scaleway `scw_sqs` ne consomment pas les files FIFO. L'idempotence repose donc sur une déduplication par `delivery_id`.
-- **Stockage** : SQLite en mode WAL, persisté dans un bucket Scaleway Object Storage (~€0,02/mois) — audit append-only garanti par un writer unique (`max-scale=1`, INSERT-only, checksum SHA-256).
-- **Auth GitHub** : GitHub App — JWT RS256, tokens d'installation à durée limitée (nécessite `PyJWT[crypto]`).
-- **Agent IA** : SDK `anthropic` — Claude Haiku 4.5, sortie structurée `json_schema`.
-- **API** : FastAPI — webhooks entrants + consultation état/historique.
-- **Observabilité** : `structlog` JSON + `correlation_id` UUID sur chaque événement.
+**If the Fixer is unavailable** (API outage, credits exhausted), the Issue is opened **anyway**, flagged "Analyse indisponible" (analysis unavailable). Detection does not depend on Claude being available.
 
 ---
 
-## Lancement local
+## Tech stack
+
+- **Runtime**: Python 3.12 — Scaleway Serverless Functions (scale-to-zero). The runtime is **Alpine/musl**: dependencies are vendored as `musllinux` wheels in the zip, because the low-level deployment does not build `requirements.txt`.
+- **Message queue**: Scaleway MnQ (SQS-compatible, boto3) — `mirador-webhooks` + its DLQ. **Standard** queue, not FIFO: Scaleway `scw_sqs` triggers do not consume FIFO queues. Idempotency therefore relies on deduplication by `delivery_id`.
+- **Storage**: SQLite in WAL mode, persisted in a Scaleway Object Storage bucket (~€0.02/month) — append-only audit guaranteed by a single writer (`max-scale=1`, INSERT-only, SHA-256 checksum).
+- **GitHub auth**: GitHub App — RS256 JWT, short-lived installation tokens (requires `PyJWT[crypto]`).
+- **AI agent**: `anthropic` SDK — Claude Haiku 4.5, structured `json_schema` output.
+- **API**: FastAPI — incoming webhooks + state/history queries.
+- **Observability**: JSON `structlog` + a UUID `correlation_id` on every event.
+
+---
+
+## Running locally
 
 ```bash
 python3.12 -m venv .venv
@@ -108,61 +112,63 @@ python3.12 -m venv .venv
 .venv/bin/pytest tests/ -v
 ```
 
-Développement en **TDD strict** : le test échoue avant que le code existe.
+Developed with **strict TDD**: the test fails before the code exists.
 
 ---
 
-## Configuration et déploiement
+## Configuration and deployment
 
-**Les déploiements passent uniquement par les workflows GitHub Actions** — jamais depuis un poste. Les scripts de `infra/scaleway/` restent utiles en diagnostic, mais ne doivent pas servir à écrire en production.
+**Deployments go through GitHub Actions workflows only** — never from a workstation. The scripts in `infra/scaleway/` remain useful for diagnostics, but must not be used to write to production.
 
-| Workflow | Rôle | Déclenchement |
+| Workflow | Role | Trigger |
 |---|---|---|
-| `deploy.yml` | Met à jour le **code** des fonctions | Push sur `master` touchant `src/`, `handler.py`, `requirements.txt` (ou à la main) |
-| `deploy-config.yml` | Pose l'**environnement + les secrets** | À la main, après modification d'une Variable ou d'un Secret |
+| `deploy.yml` | Updates the functions' **code** | Push to `master` touching `src/`, `handler.py`, `requirements.txt` (or manually) |
+| `deploy-config.yml` | Sets the **environment + secrets** | Manually, after changing a Variable or a Secret |
 
-La source de vérité de la configuration est constituée des **Variables et Secrets GitHub Actions** du dépôt (Settings → Secrets and variables → Actions).
+The configuration's source of truth is the repository's **GitHub Actions Variables and Secrets** (Settings → Secrets and variables → Actions).
 
-Variables (non sensibles) : `MIRADOR_DEPOTS`, `BUCKET_NAME`, `S3_ENDPOINT_URL`, `SQS_ENDPOINT_URL`, `SQS_QUEUE_URL`, `SCALEWAY_REGION`, `APP_ID`.
+Variables (non-sensitive): `MIRADOR_DEPOTS`, `BUCKET_NAME`, `S3_ENDPOINT_URL`, `SQS_ENDPOINT_URL`, `SQS_QUEUE_URL`, `SCALEWAY_REGION`, `APP_ID`.
 
-Secrets : `APP_PRIVATE_KEY`, `WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `SCALEWAY_S3_ACCESS_KEY`, `SCALEWAY_S3_SECRET_KEY`, `MNQ_ACCESS_KEY`, `MNQ_SECRET_KEY`, plus `SCW_DEPLOY_ACCESS_KEY`, `SCW_DEPLOY_SECRET_KEY`, `SCW_PROJECT_ID` pour le déploiement.
+Secrets: `APP_PRIVATE_KEY`, `WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `SCALEWAY_S3_ACCESS_KEY`, `SCALEWAY_S3_SECRET_KEY`, `MNQ_ACCESS_KEY`, `MNQ_SECRET_KEY`, plus `SCW_DEPLOY_ACCESS_KEY`, `SCW_DEPLOY_SECRET_KEY`, `SCW_PROJECT_ID` for deployment.
 
-> Le préfixe `GITHUB_` est réservé par GitHub Actions. D'où `APP_ID` / `APP_PRIVATE_KEY` côté GitHub, que `deploy-config.yml` remappe en `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` côté Scaleway.
+> The `GITHUB_` prefix is reserved by GitHub Actions, hence `APP_ID` / `APP_PRIVATE_KEY` on the GitHub side, which `deploy-config.yml` maps to `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` on the Scaleway side. Likewise, Scaleway Functions reserves the `SCW_` prefix: variables set on the functions use `SCALEWAY_`.
 
-> Les credentials MnQ (`MNQ_*`, file de messages) sont **distinctes** des credentials Object Storage (`SCALEWAY_S3_*`, bucket) et de la clé de déploiement (`SCW_DEPLOY_*`, CI). Ce sont trois jeux de clés différents, tous chez Scaleway.
+> MnQ credentials (`MNQ_*`, message queue) are **distinct** from Object Storage credentials (`SCALEWAY_S3_*`, bucket) and from the deployment key (`SCW_DEPLOY_*`, CI). These are three different key sets, all at Scaleway.
 
-### Surveiller un nouveau dépôt
+### Monitoring a new repository
 
-1. Vérifier que la **GitHub App est installée** sur le dépôt (sinon aucun webhook n'arrive).
-2. Ajouter une entrée à la Variable `MIRADOR_DEPOTS` :
+1. Make sure the **GitHub App is installed** on the repository (otherwise no webhook arrives).
+2. Add an entry to the `MIRADOR_DEPOTS` Variable:
 
 ```json
-{"identifiant_github":"proprietaire/depot","installation_id":145689603,"responsables":["aboigues"],"seuil_timeout_secondes":600,"regles":[]}
+{"identifiant_github":"owner/repo","installation_id":145689603,"responsables":["aboigues"],"seuil_timeout_secondes":600,"regles":[]}
 ```
 
-3. Lancer `deploy-config.yml`.
+3. Run `deploy-config.yml`.
 
-`seuil_timeout_secondes` se cale sur les durées réelles du dépôt : il requalifie en `TIMEOUT` un échec anormalement lent. Trop bas, il transforme un échec ordinaire en alerte ; il n'a aucun effet sur la détection des échecs eux-mêmes.
+`seuil_timeout_secondes` (timeout threshold, in seconds) should match the repository's real durations: it reclassifies an abnormally slow failure as `TIMEOUT`. Set too low, it turns an ordinary failure into an alert; it has no effect on detecting the failures themselves.
 
-Pour que `/approuver` puisse matérialiser un correctif de dépendances, copier `infra/depot-surveille/mirador-autofix.yml` dans le dépôt surveillé et autoriser Actions à créer des PR (Settings → Actions → *Allow GitHub Actions to create and approve pull requests*).
+For `/approuver` to materialise a dependency fix, copy `infra/depot-surveille/mirador-autofix.yml` into the monitored repository and allow Actions to create PRs (Settings → Actions → *Allow GitHub Actions to create and approve pull requests*).
 
 ---
 
-## Sécurité des secrets
+## Secret hygiene
 
-- **Aucun secret dans l'arbre de travail.** Le miroir local vit dans
-  `~/.config/mirador/secrets.env` (surchargeable par `MIRADOR_SECRETS`), la clé de la
-  GitHub App dans `~/.config/mirador/*.pem`. La source de vérité reste les
-  Secrets/Variables GitHub Actions.
-- **Hook pre-commit gitleaks**, à installer une fois par clone :
-  `pip install -e ".[dev]" && pre-commit install`. Il refuse tout commit contenant un
-  secret, quel que soit le nom du fichier.
-- **Job CI `secrets`** : gitleaks rescanne tout l'historique à chaque push. C'est le filet
-  si le hook a été contourné (`--no-verify`) ou n'est pas installé.
-- Exceptions justifiées : `.gitleaks.toml`.
-- Limite connue : la configuration par défaut de gitleaks ne lit pas certaines extensions
-  binaires (`.bin`, images…). Les swap vim, `.dat`, `.db` et `.sqlite` sont bien analysés.
+- **No secret in the working tree.** The local mirror lives in
+  `~/.config/mirador/secrets.env` (overridable with `MIRADOR_SECRETS`), the GitHub App
+  key in `~/.config/mirador/*.pem`. The source of truth remains the GitHub Actions
+  Secrets/Variables.
+- **gitleaks pre-commit hook**, to install once per clone:
+  `pip install -e ".[dev]" && pre-commit install`. It rejects any commit containing a
+  secret, whatever the file name.
+- **CI job `secrets`**: gitleaks rescans the whole history on every push. It is the safety
+  net if the hook was bypassed (`--no-verify`) or is not installed.
+- Justified exceptions: `.gitleaks.toml`.
+- Known limitation: gitleaks' default configuration skips some binary extensions
+  (`.bin`, images…). Vim swap files, `.dat`, `.db` and `.sqlite` are scanned.
 
-## Périmètre v1
+## v1 scope
 
-Quelques dépôts GitHub surveillés simultanément. Interventions limitées à la relance de workflow et à l'ouverture de PR — **aucun commit direct** (Principe III).
+A few GitHub repositories monitored simultaneously. Interventions are limited to rerunning workflows and opening PRs — **never a direct commit** (Principle III).
+
+> The internal documentation (`docs/`, `infra/`, `specs/`) and the code identifiers are in French.
