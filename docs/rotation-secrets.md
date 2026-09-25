@@ -26,9 +26,9 @@ ont disparu avec lui. La rotation reste recommandée par hygiène.
 | `ANTHROPIC_API_KEY` | ✅ | Facturation API Claude |
 | `GITHUB_APP_PRIVATE_KEY` | ✅ | **Identité de la GitHub App** sur les dépôts de l'installation |
 | `WEBHOOK_SECRET` | ✅ | Forger des webhooks signés → faire agir Mirador |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | ✅ | Bucket d'audit (`SCW0C45PRGYFEYX53AN8`, app IAM `mirador`) |
+| `SCW_S3_ACCESS_KEY` / `SCW_S3_SECRET_KEY` (ex-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) | ✅ | Bucket d'audit (`SCW0C45PRGYFEYX53AN8`, app IAM `mirador`) |
 | `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` | ✅ | File de messages (credential `mirador`, `39cdedeb`) |
-| `SCW_ACCESS_KEY` / `SCW_SECRET_KEY` / `SCW_PROJECT_ID` | ❌ | **Non exposées** — créées après (PR #14). Ne pas y toucher. |
+| `SCW_DEPLOY_ACCESS_KEY` / `SCW_DEPLOY_SECRET_KEY` (ex-`SCW_ACCESS_KEY` / `SCW_SECRET_KEY`) / `SCW_PROJECT_ID` | ❌ | **Non exposées** — créées après (PR #14). |
 
 Le plus grave est la **clé privée de la GitHub App** : elle permet de s'authentifier comme
 Mirador sur les dépôts de l'installation 145689603, avec droits d'écriture (PR, issues).
@@ -133,16 +133,19 @@ scw iam api-key create \
 Valider (lecture seule sur le bucket) :
 
 ```bash
-AWS_ACCESS_KEY_ID=NOUVELLE AWS_SECRET_ACCESS_KEY=NOUVELLE_SECRET \
+SCW_S3_ACCESS_KEY=NOUVELLE SCW_S3_SECRET_KEY=NOUVELLE_SECRET \
 .venv/bin/python - <<'PY'
 import boto3
-s3 = boto3.client("s3", endpoint_url="https://s3.fr-par.scw.cloud", region_name="fr-par")
+import os
+s3 = boto3.client("s3", endpoint_url="https://s3.fr-par.scw.cloud", region_name="fr-par",
+                  aws_access_key_id=os.environ["SCW_S3_ACCESS_KEY"],
+                  aws_secret_access_key=os.environ["SCW_S3_SECRET_KEY"])
 s3.head_object(Bucket="telemach-mirador-audit", Key="mirador.db")
 print("✓ accès bucket OK")
 PY
 ```
 
-Mettre à jour les Secrets **`AWS_ACCESS_KEY_ID`** et **`AWS_SECRET_ACCESS_KEY`** → lancer
+Mettre à jour les Secrets **`SCW_S3_ACCESS_KEY`** et **`SCW_S3_SECRET_KEY`** → lancer
 `deploy-config.yml` → vérifier → **puis** :
 
 ```bash
@@ -177,10 +180,13 @@ scw mnq sqs create-credentials \
 Valider :
 
 ```bash
-AWS_ACCESS_KEY_ID=NOUVELLE_MNQ_ACCESS AWS_SECRET_ACCESS_KEY=NOUVELLE_MNQ_SECRET \
+MNQ_ACCESS_KEY=NOUVELLE_MNQ_ACCESS MNQ_SECRET_KEY=NOUVELLE_MNQ_SECRET \
 .venv/bin/python - <<'PY'
 import boto3
-c = boto3.client("sqs", endpoint_url="https://sqs.mnq.fr-par.scaleway.com", region_name="fr-par")
+import os
+c = boto3.client("sqs", endpoint_url="https://sqs.mnq.fr-par.scaleway.com", region_name="fr-par",
+                 aws_access_key_id=os.environ["MNQ_ACCESS_KEY"],
+                 aws_secret_access_key=os.environ["MNQ_SECRET_KEY"])
 c.send_message(QueueUrl="https://sqs.mnq.fr-par.scaleway.com/project-4135267b-fd5a-4079-b716-8b24240deabd/mirador-webhooks",
                MessageBody='{"type":"ping-rotation"}')
 print("✓ publication OK (message ignoré par le pipeline : type inconnu)")

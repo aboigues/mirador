@@ -29,14 +29,16 @@ URLs des queues : `https://sqs.mnq.fr-par.scaleway.com/project-4135267b-fd5a-407
 
 Rejouer MnQ (idempotent) : `./provision.sh`.
 
-## Deux jeux de credentials DISTINCTS (découverte du provisioning réel)
+## Trois jeux de credentials DISTINCTS
 
-| Usage | Variables | Source |
-|-------|-----------|--------|
-| **SQS / MnQ** | `MNQ_ACCESS_KEY`, `MNQ_SECRET_KEY` | `scw mnq sqs create-credentials` |
-| **S3 / bucket** | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | clé API IAM de l'app, scopée MIRADOR |
+| Usage | Variables | Utilisées par | Source |
+|-------|-----------|---------------|--------|
+| **Déploiement** | `SCW_DEPLOY_ACCESS_KEY`, `SCW_DEPLOY_SECRET_KEY` | GitHub Actions (CLI `scw`) | clé API IAM de l'app `mirador-deploy` (`FunctionsFullAccess`, projet MIRADOR) |
+| **S3 / bucket** | `SCW_S3_ACCESS_KEY`, `SCW_S3_SECRET_KEY` | fonctions (writer d'audit) | clé API IAM de l'app `mirador`, scopée MIRADOR |
+| **SQS / MnQ** | `MNQ_ACCESS_KEY`, `MNQ_SECRET_KEY` | fonctions (webhook) | `scw mnq sqs create-credentials` |
 
-Les credentials MnQ ne donnent pas accès à S3, et inversement.
+Aucun jeu ne donne accès au périmètre d'un autre. Tout est chez Scaleway : aucun de
+ces noms ne désigne AWS, même si boto3 (client S3/SQS) est utilisé.
 
 ## § Bucket — pourquoi il n'est pas dans `provision.sh`
 
@@ -85,8 +87,8 @@ scw iam api-key create application-id=$APP_ID \
   jamais supprimer, ce qui verrouille l'immutabilité au niveau IAM (Principe III).
 - Pour créer le bucket via CLI avec cette clé, ajouter temporairement
   `ObjectStorageBucketsWrite` à la policy, puis le retirer.
-- L'`access_key` / `secret_key` de la clé → `AWS_ACCESS_KEY_ID` /
-  `AWS_SECRET_ACCESS_KEY` de la fonction.
+- L'`access_key` / `secret_key` de la clé → `SCW_S3_ACCESS_KEY` /
+  `SCW_S3_SECRET_KEY` de la fonction.
 
 ## Variables d'environnement de la fonction
 
@@ -94,11 +96,11 @@ scw iam api-key create application-id=$APP_ID \
 |----------|--------|
 | `BUCKET_NAME` | `telemach-mirador-audit` |
 | `S3_ENDPOINT_URL` | `https://s3.fr-par.scw.cloud` |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | clé API app, scopée MIRADOR (§ IAM) |
+| `SCW_S3_ACCESS_KEY` / `SCW_S3_SECRET_KEY` | clé API app, scopée MIRADOR (§ IAM) |
 | `SQS_ENDPOINT_URL` | `https://sqs.mnq.fr-par.scaleway.com` |
 | `SQS_QUEUE_URL` | `…/project-4135267b-…/mirador-webhooks` (queue standard) |
 | `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` | credentials MnQ (dans le fichier de secrets local) |
-| `AWS_REGION` | `fr-par` |
+| `SCW_REGION` | `fr-par` |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `WEBHOOK_SECRET` | voir `docs/github-app.md` |
 | `ANTHROPIC_API_KEY` | console Anthropic |
 | `MIRADOR_DEPOTS` | config JSON des dépôts (voir `docs/github-app.md` §4) |
@@ -146,8 +148,8 @@ sans toucher aux secrets. Manuellement :
 ./infra/scaleway/update_code.sh <function-id>
 ```
 
-**Secrets GitHub Actions requis** (Settings → Secrets) : `SCW_ACCESS_KEY`,
-`SCW_SECRET_KEY`, `SCW_PROJECT_ID` (= projet MIRADOR). Le CD ne connaît pas les
+**Secrets GitHub Actions requis** (Settings → Secrets) : `SCW_DEPLOY_ACCESS_KEY`,
+`SCW_DEPLOY_SECRET_KEY`, `SCW_PROJECT_ID` (= projet MIRADOR). Le CD ne connaît pas les
 secrets applicatifs — ils restent sur les fonctions.
 
 ### Re-déploiement après un correctif (`redeploy.sh`)

@@ -24,7 +24,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 ENDPOINT = os.environ.get("SQS_ENDPOINT_URL", "https://sqs.mnq.fr-par.scaleway.com")
-REGION = os.environ.get("AWS_REGION", "fr-par")
+REGION = os.environ.get("SCW_REGION", "fr-par")
 
 
 def _client():

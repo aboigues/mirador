@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 INSTALLATION_ID = 145689603
 BUCKET = os.environ.get("BUCKET_NAME", "telemach-mirador-audit")
-REGION = os.environ.get("AWS_REGION", "fr-par")
+REGION = os.environ.get("SCW_REGION", "fr-par")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT_URL", "https://s3.fr-par.scw.cloud")
 SQS_ENDPOINT = os.environ.get("SQS_ENDPOINT_URL", "https://sqs.mnq.fr-par.scaleway.com")
 
@@ -56,11 +56,15 @@ def _anthropic() -> str:
 
 
 def _object_storage() -> str:
-    if _requis("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
-        return "⚠️  ignoré — AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY absents"
+    if _requis("SCW_S3_ACCESS_KEY", "SCW_S3_SECRET_KEY"):
+        return "⚠️  ignoré — SCW_S3_ACCESS_KEY / SCW_S3_SECRET_KEY absents"
     import boto3
 
-    s3 = boto3.client("s3", endpoint_url=S3_ENDPOINT, region_name=REGION)
+    s3 = boto3.client(
+        "s3", endpoint_url=S3_ENDPOINT, region_name=REGION,
+        aws_access_key_id=os.environ["SCW_S3_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["SCW_S3_SECRET_KEY"],
+    )
     s3.head_object(Bucket=BUCKET, Key="mirador.db")
     return f"✓ lecture du journal d'audit OK (bucket {BUCKET})"
 
@@ -72,7 +76,7 @@ def _mnq() -> str:
     import boto3
 
     # Les credentials MnQ sont DISTINCTES des credentials Object Storage : on ne
-    # peut pas se reposer sur les AWS_* de l'environnement.
+    # peut pas réutiliser les SCW_S3_* du bucket.
     sqs = boto3.client(
         "sqs",
         endpoint_url=SQS_ENDPOINT,
