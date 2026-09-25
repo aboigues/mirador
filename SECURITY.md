@@ -31,9 +31,11 @@ Mirador is maintained by a single person, on a best-effort basis:
 
 | Step | Target |
 | ---- | ------ |
-| Acknowledgement | within 7 days |
-| First assessment (accepted / declined, with reasons) | within 14 days |
-| Fix for an accepted vulnerability | as fast as severity requires; you will be kept informed |
+| Acknowledgement | within 7 days of receipt |
+| Fix for an accepted vulnerability | within 14 days of receipt |
+
+If a report is declined, you will be told why. If a fix needs more time, you will be
+kept informed of its progress.
 
 Once fixed, the vulnerability is disclosed in a GitHub Security Advisory. You will be
 credited, unless you prefer to remain anonymous.
@@ -97,9 +99,11 @@ Mirador est maintenu par une seule personne, au mieux de ses disponibilités :
 
 | Étape | Objectif |
 | ----- | -------- |
-| Accusé de réception | sous 7 jours |
-| Première évaluation (acceptée / refusée, avec justification) | sous 14 jours |
-| Correctif d'une vulnérabilité acceptée | aussi vite que la gravité l'exige ; tu seras tenu informé |
+| Accusé de réception | sous 7 jours après réception |
+| Correctif d'une vulnérabilité acceptée | sous 14 jours après réception |
+
+Si un signalement est refusé, tu en connaîtras la raison. Si un correctif demande plus
+de temps, tu seras tenu informé de son avancement.
 
 Une fois corrigée, la vulnérabilité est publiée dans une GitHub Security Advisory. Tu
 seras crédité, sauf si tu préfères rester anonyme.
