@@ -35,6 +35,7 @@ def _payload_valide() -> dict:
             "updated_at": "2026-05-29T10:05:00Z",
             "html_url": "https://github.com/aboigues/k8t/actions/runs/12345678",
             "jobs_url": "https://api.github.com/repos/aboigues/k8t/actions/runs/12345678/jobs",
+            "head_repository": {"full_name": "aboigues/k8t", "fork": False},
         },
         "repository": {
             "id": 999,

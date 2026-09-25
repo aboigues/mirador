@@ -144,6 +144,8 @@ Secrets : `APP_PRIVATE_KEY`, `WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `SCALEWAY_S3
 
 3. Lancer `deploy-config.yml`.
 
+Les runs déclenchés depuis un **fork** (pull requests de contributeurs extérieurs) sont ignorés : leurs logs sont contrôlés par un tiers, et les analyser coûterait un appel au LLM tout en exposant le Correcteur à une injection de prompt.
+
 `seuil_timeout_secondes` se cale sur les durées réelles du dépôt : il requalifie en `TIMEOUT` un échec anormalement lent. Trop bas, il transforme un échec ordinaire en alerte ; il n'a aucun effet sur la détection des échecs eux-mêmes.
 
 Pour que `/approuver` puisse matérialiser un correctif de dépendances, copier `infra/depot-surveille/mirador-autofix.yml` dans le dépôt surveillé et autoriser Actions à créer des PR (Settings → Actions → *Allow GitHub Actions to create and approve pull requests*).

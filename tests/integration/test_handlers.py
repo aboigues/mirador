@@ -24,7 +24,7 @@ def _payload_workflow() -> bytes:
     return json.dumps({
         "action": "completed",
         "workflow_run": {"id": 12345678, "name": "CI", "conclusion": "failure",
-                         "head_branch": "main"},
+                         "head_branch": "main", "head_repository": {"full_name": DEPOT}},
         "repository": {"full_name": DEPOT},
     }).encode()
 

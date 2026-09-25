@@ -59,6 +59,19 @@ def _valider_signature(body: bytes, signature_header: Optional[str], secret: str
     return hmac.compare_digest(hash_calcule, hash_attendu)
 
 
+def _run_du_depot_surveille(payload: dict[str, Any]) -> bool:
+    """Vrai si le code exécuté par le run vient du dépôt surveillé lui-même.
+
+    Un run déclenché par une PR venant d'un fork produit des logs contrôlés par un
+    inconnu : les confier au correcteur coûte une analyse et expose à une
+    injection de prompt (voir SECURITY.md). Dépôt de tête absent ou nul (fork
+    supprimé) : provenance inconnue, donc refusé.
+    """
+    depot = payload.get("repository", {}).get("full_name", "")
+    tete = (payload.get("workflow_run", {}).get("head_repository") or {}).get("full_name", "")
+    return bool(depot) and tete.lower() == depot.lower()
+
+
 def _construire_message_workflow_run(payload: dict[str, Any], delivery_id: str) -> dict[str, Any]:
     workflow_run = payload.get("workflow_run", {})
     repository = payload.get("repository", {})
@@ -169,6 +182,14 @@ def traiter_webhook_brut(
         # completed). Seul l'event terminé a des logs exploitables : ignorer
         # les autres pour ne pas faire échouer le traitement en aval.
         if payload.get("action") != "completed":
+            return 204, None
+        if not _run_du_depot_surveille(payload):
+            log.info(
+                "webhook.run_externe_ignore",
+                delivery_id=delivery_id,
+                depot=payload.get("repository", {}).get("full_name", ""),
+                depot_tete=(payload.get("workflow_run", {}).get("head_repository") or {}).get("full_name"),
+            )
             return 204, None
         return 202, _construire_message_workflow_run(payload, delivery_id)
 
