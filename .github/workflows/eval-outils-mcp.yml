@@ -1,0 +1,41 @@
+name: Évaluation des outils MCP
+
+# Vérifie qu'un vrai modèle Claude choisit le bon outil du serveur MCP de Mirador
+# pour 10 questions de mainteneur (CS-003, seuil 9/10).
+#
+# Manuel, et pas dans la CI de chaque push : l'appel au modèle est payant et son
+# choix n'est pas strictement déterministe. À relancer quand on touche aux noms,
+# descriptions ou paramètres des outils.
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Moindre privilège : le GITHUB_TOKEN ne fait que lire le dépôt (checkout).
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: Évaluation (appels Claude réels)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer uv
+        run: pip install uv
+
+      - name: Installer les dépendances
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Évaluer le choix des outils
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m tests.eval_outils_mcp

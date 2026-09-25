@@ -92,6 +92,31 @@ The level is decided by the **Detector** (deterministic rules, no LLM call); the
 
 ---
 
+## MCP server (read-only)
+
+Mirador ships a local [Model Context Protocol](https://modelcontextprotocol.io) server, so a maintainer can question it from Claude Code, Claude Desktop or any MCP client: *"Which incidents on aboigues/k8t are waiting for a decision?"*, *"Who rejected that fix?"*, *"Has the audit log been tampered with?"*.
+
+Tool names are in French, like the rest of the codebase (project constitution):
+
+| Tool | Meaning |
+|---|---|
+| `lister_depots` | list monitored repositories |
+| `lister_anomalies` | list a repository's incidents, filterable by status and risk level |
+| `historique_anomalie` | full timeline of one incident: detection, escalation, human approval or rejection |
+| `verifier_integrite_journal` | recompute the audit log's SHA-256 and compare it with the recorded one |
+| `classer_echec` | apply Mirador's deterministic risk rules to a failure you paste (no LLM call) |
+
+**Read-only by design.** There is deliberately no tool to approve, reject, re-run or open a PR: approval stays a human action in GitHub (`/approuver`). Every tool is annotated `readOnlyHint`; a test fails if any other tool appears. The server reads the log through a read-only IAM key, or a local copy through an adapter that cannot write.
+
+```bash
+pip install -e ".[mcp]"
+claude mcp add mirador -- .venv/bin/mirador-mcp --config depots.json --journal-local ./journal
+```
+
+Tested at three levels: tool logic, the protocol through the SDK client (including parity with the query API), and the real stdio process (stdout carries JSON-RPC only; the log checksum is unchanged after every tool call). An eval (`tests/eval_outils_mcp.py`, `workflow_dispatch`) checks that Claude Haiku 4.5 picks the right tool and arguments for 10 maintainer questions (threshold 9/10). Design: [`specs/002-serveur-mcp/`](specs/002-serveur-mcp/).
+
+---
+
 ## Tech stack
 
 - **Runtime**: Python 3.12 — Scaleway Serverless Functions (scale-to-zero). The runtime is **Alpine/musl**: dependencies are vendored as `musllinux` wheels in the zip, because the low-level deployment does not build `requirements.txt`.

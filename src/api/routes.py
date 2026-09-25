@@ -12,49 +12,17 @@ from typing import Any, Callable, Optional
 import structlog
 from fastapi import FastAPI, HTTPException, Query
 
-from src.domaine.journal import TypeEvenement
+from src.domaine.vue_anomalies import grouper_anomalies
 
 log = structlog.get_logger(__name__)
 
 _LIMITE_DEFAUT = 50
 _LIMITE_MAX = 200
 
-# Statut d'anomalie inféré du type du dernier événement journalisé
-_STATUT_PAR_EVENEMENT = {
-    TypeEvenement.DETECTION: "OUVERTE",
-    TypeEvenement.INTERVENTION: "RÉSOLUE",
-    TypeEvenement.ESCALADE: "ESCALADÉE",
-    TypeEvenement.VALIDATION: "EN_COURS",
-    TypeEvenement.REJET: "REJETÉE",
-    TypeEvenement.ERREUR_LIVRAISON: "OUVERTE",
-}
-
 
 def _identifiant_vers_depot(identifiant: str) -> str:
     """`aboigues-k8t` → `aboigues/k8t` (premier tiret = séparateur)."""
     return identifiant.replace("-", "/", 1)
-
-
-def _grouper_anomalies(evenements: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Reconstruit une vue anomalie par correlation_id à partir du journal ordonné."""
-    par_correlation: dict[str, list[dict[str, Any]]] = {}
-    for evt in evenements:
-        par_correlation.setdefault(evt["correlation_id"], []).append(evt)
-
-    anomalies = []
-    for correlation_id, groupe in par_correlation.items():
-        premier, dernier = groupe[0], groupe[-1]
-        anomalies.append({
-            "correlation_id": correlation_id,
-            "workflow_run_id": premier.get("workflow_run_id"),
-            "type": premier.get("type_anomalie"),
-            "niveau_risque": dernier.get("niveau_risque"),
-            "statut": _STATUT_PAR_EVENEMENT.get(dernier["type_evenement"], "OUVERTE"),
-            "cause_identifiee": dernier.get("resultat"),
-            "detecte_le": premier.get("horodatage"),
-            "mis_a_jour_le": dernier.get("horodatage"),
-        })
-    return anomalies
 
 
 def creer_api(
@@ -88,7 +56,7 @@ def creer_api(
 
         depot = _identifiant_vers_depot(identifiant)
         evenements = [e for e in journal.lister() if e.get("depot") == depot]
-        anomalies = _grouper_anomalies(evenements)
+        anomalies = grouper_anomalies(evenements)
 
         if statut is not None:
             anomalies = [a for a in anomalies if a["statut"] == statut]

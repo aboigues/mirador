@@ -90,6 +90,29 @@ Le niveau est décidé par le **Détecteur** (règles déterministes, sans appel
 
 ---
 
+## Serveur MCP (lecture seule)
+
+Mirador fournit un serveur [Model Context Protocol](https://modelcontextprotocol.io) local : un mainteneur l'interroge depuis Claude Code, Claude Desktop ou tout client MCP (« Quelles anomalies attendent une décision sur aboigues/k8t ? », « Qui a rejeté ce correctif ? », « Le journal d'audit a-t-il été modifié ? »).
+
+| Outil | Rôle |
+|---|---|
+| `lister_depots` | dépôts surveillés |
+| `lister_anomalies` | anomalies d'un dépôt, filtrables par statut et niveau de risque |
+| `historique_anomalie` | chronologie complète d'une anomalie : détection, escalade, validation ou rejet humain |
+| `verifier_integrite_journal` | recalcule l'empreinte SHA-256 du journal et la compare à celle enregistrée |
+| `classer_echec` | applique les règles de risque déterministes à un échec fourni (aucun appel au LLM) |
+
+**Lecture seule par conception.** Aucun outil n'approuve, ne rejette, ne relance ni n'ouvre de PR : l'approbation reste un geste humain dans GitHub (`/approuver`). Tous les outils sont annotés `readOnlyHint` ; un test échoue si un autre outil apparaît. Le serveur lit le journal avec une clé IAM en lecture seule, ou une copie locale via un adaptateur incapable d'écrire.
+
+```bash
+pip install -e ".[mcp]"
+claude mcp add mirador -- .venv/bin/mirador-mcp --config depots.json --journal-local ./journal
+```
+
+Testé à trois niveaux : logique des outils, protocole via le client du SDK (dont l'équivalence avec l'API de consultation), et vrai processus stdio (stdout ne transporte que du JSON-RPC ; l'empreinte du journal est inchangée après chaque appel). Une évaluation (`tests/eval_outils_mcp.py`, `workflow_dispatch`) vérifie que Claude Haiku 4.5 choisit le bon outil et les bons arguments pour 10 questions de mainteneur (seuil 9/10). Conception : [`specs/002-serveur-mcp/`](specs/002-serveur-mcp/).
+
+---
+
 ## Stack technique
 
 - **Runtime** : Python 3.12 — Scaleway Serverless Functions (scale-to-zero). Le runtime est **Alpine/musl** : les dépendances sont vendorisées en wheels `musllinux` dans le zip, car le déploiement bas-niveau ne construit pas `requirements.txt`.
