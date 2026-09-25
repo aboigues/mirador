@@ -146,6 +146,8 @@ Secrets: `APP_PRIVATE_KEY`, `WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `SCALEWAY_S3_
 
 3. Run `deploy-config.yml`.
 
+Runs triggered from a **fork** (pull requests from outside contributors) are ignored: their logs are controlled by a third party, and analysing them would cost an LLM call and expose the Fixer to prompt injection.
+
 `seuil_timeout_secondes` (timeout threshold, in seconds) should match the repository's real durations: it reclassifies an abnormally slow failure as `TIMEOUT`. Set too low, it turns an ordinary failure into an alert; it has no effect on detecting the failures themselves.
 
 For `/approuver` to materialise a dependency fix, copy `infra/depot-surveille/mirador-autofix.yml` into the monitored repository and allow Actions to create PRs (Settings → Actions → *Allow GitHub Actions to create and approve pull requests*).
