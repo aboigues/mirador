@@ -31,7 +31,15 @@ dev = [
     "httpx>=0.28.1",
     "moto[s3]>=5.0.0",
     "pre-commit>=4.6.2",
+    "mcp>=2.2.0",
 ]
+# Serveur MCP local (lecture seule) : absent du paquet des fonctions serverless.
+mcp = [
+    "mcp>=2.2.0",
+]
+
+[project.scripts]
+mirador-mcp = "src.interface_mcp.serveur:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
