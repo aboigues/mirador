@@ -9,7 +9,7 @@
 set -euo pipefail
 
 PROFILE="${SCW_PROFILE-telemach}"
-REGION="${SCW_REGION:-fr-par}"
+REGION="${SCALEWAY_REGION:-fr-par}"
 PROJECT_ID="${MIRADOR_PROJECT_ID:-4135267b-fd5a-4079-b716-8b24240deabd}"
 NAMESPACE="mirador"
 RUNTIME="python312"
@@ -30,14 +30,14 @@ ENV_ARGS=(
   "environment-variables.S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-https://s3.fr-par.scw.cloud}"
   "environment-variables.SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:-https://sqs.mnq.fr-par.scaleway.com}"
   "environment-variables.SQS_QUEUE_URL=${SQS_QUEUE_URL:?SQS_QUEUE_URL requis}"
-  "environment-variables.SCW_REGION=$REGION"
+  "environment-variables.SCALEWAY_REGION=$REGION"
   "environment-variables.GITHUB_APP_ID=${GITHUB_APP_ID:?GITHUB_APP_ID requis}"
   "environment-variables.MIRADOR_DEPOTS=${MIRADOR_DEPOTS:?MIRADOR_DEPOTS requis}"
 )
 
 # --- Secrets (chiffrés) ----------------------------------------------------
 _SECRETS=(WEBHOOK_SECRET ANTHROPIC_API_KEY GITHUB_APP_PRIVATE_KEY
-          SCW_S3_ACCESS_KEY SCW_S3_SECRET_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY)
+          SCALEWAY_S3_ACCESS_KEY SCALEWAY_S3_SECRET_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY)
 SECRET_ARGS=(); i=0
 for nom in "${_SECRETS[@]}"; do
   SECRET_ARGS+=("secret-environment-variables.$i.key=$nom"

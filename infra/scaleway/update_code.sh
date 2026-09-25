@@ -11,7 +11,7 @@
 set -euo pipefail
 
 PROFILE="${SCW_PROFILE-telemach}"
-REGION="${SCW_REGION:-fr-par}"
+REGION="${SCALEWAY_REGION:-fr-par}"
 FN_ID="${1:?function-id requis}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ZIP="$(mktemp -d)/mirador.zip"

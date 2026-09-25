@@ -11,7 +11,7 @@
 set -euo pipefail
 
 PROFILE="${SCW_PROFILE:-telemach}"
-REGION="${SCW_REGION:-fr-par}"
+REGION="${SCALEWAY_REGION:-fr-par}"
 PROJECT_ID="${MIRADOR_PROJECT_ID:-4135267b-fd5a-4079-b716-8b24240deabd}"  # projet MIRADOR
 SECRETS_FILE="${MIRADOR_SECRETS:-$HOME/.config/mirador/secrets.env}"  # hors dépôt
 

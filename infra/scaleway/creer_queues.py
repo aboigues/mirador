@@ -24,7 +24,7 @@ import sys
 import boto3
 
 ENDPOINT = os.environ.get("SQS_ENDPOINT_URL", "https://sqs.mnq.fr-par.scaleway.com")
-REGION = os.environ.get("SCW_REGION", "fr-par")
+REGION = os.environ.get("SCALEWAY_REGION", "fr-par")
 MAX_RECEIVE_COUNT = 3
 RETENTION = "86400"  # 24 h
 

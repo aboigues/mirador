@@ -15,6 +15,10 @@ name: Configuration Scaleway (env + secrets)
 # ⚠️ `scw function function update environment-variables.X=…` REMPLACE toute la
 # map. Les 7 variables sont donc TOUJOURS reposées ensemble — ne jamais n'en
 # passer qu'une. Idem pour les secrets, qui vivent dans une map séparée.
+#
+# ⚠️ Aucune variable de fonction ne peut commencer par SCW_ (préfixe réservé par
+# Scaleway) : d'où SCALEWAY_REGION / SCALEWAY_S3_*. La clé de déploiement, qui ne
+# quitte pas la CI, garde les noms SCW_* qu'attend la CLI.
 
 on:
   workflow_dispatch:
@@ -94,7 +98,7 @@ jobs:
           S3_ENDPOINT_URL: ${{ vars.S3_ENDPOINT_URL }}
           SQS_ENDPOINT_URL: ${{ vars.SQS_ENDPOINT_URL }}
           SQS_QUEUE_URL: ${{ vars.SQS_QUEUE_URL }}
-          SCW_REGION: ${{ vars.SCW_REGION }}
+          SCALEWAY_REGION: ${{ vars.SCALEWAY_REGION }}
           MIRADOR_DEPOTS: ${{ vars.MIRADOR_DEPOTS }}
           # Le préfixe GITHUB_ est réservé par GitHub Actions : les Variables et
           # Secrets s'appellent APP_ID / APP_PRIVATE_KEY, mais le runtime attend
@@ -104,8 +108,8 @@ jobs:
           GITHUB_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SCW_S3_ACCESS_KEY: ${{ secrets.SCW_S3_ACCESS_KEY }}
-          SCW_S3_SECRET_KEY: ${{ secrets.SCW_S3_SECRET_KEY }}
+          SCALEWAY_S3_ACCESS_KEY: ${{ secrets.SCALEWAY_S3_ACCESS_KEY }}
+          SCALEWAY_S3_SECRET_KEY: ${{ secrets.SCALEWAY_S3_SECRET_KEY }}
           MNQ_ACCESS_KEY: ${{ secrets.MNQ_ACCESS_KEY }}
           MNQ_SECRET_KEY: ${{ secrets.MNQ_SECRET_KEY }}
           CHOIX: ${{ inputs.fonctions }}
@@ -124,20 +128,30 @@ jobs:
             "environment-variables.S3_ENDPOINT_URL=${S3_ENDPOINT_URL:?Variable S3_ENDPOINT_URL requise}"
             "environment-variables.SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:?Variable SQS_ENDPOINT_URL requise}"
             "environment-variables.SQS_QUEUE_URL=${SQS_QUEUE_URL:?Variable SQS_QUEUE_URL requise}"
-            "environment-variables.SCW_REGION=${SCW_REGION:?Variable SCW_REGION requise}"
+            "environment-variables.SCALEWAY_REGION=${SCALEWAY_REGION:?Variable SCALEWAY_REGION requise}"
             "environment-variables.GITHUB_APP_ID=${GITHUB_APP_ID:?Variable APP_ID requise}"
             "environment-variables.MIRADOR_DEPOTS=${MIRADOR_DEPOTS:?Variable MIRADOR_DEPOTS requise}"
           )
 
           # Map des secrets : séparée de la précédente, reposée en entier aussi.
           _SECRETS=(WEBHOOK_SECRET ANTHROPIC_API_KEY GITHUB_APP_PRIVATE_KEY
-                    SCW_S3_ACCESS_KEY SCW_S3_SECRET_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY)
+                    SCALEWAY_S3_ACCESS_KEY SCALEWAY_S3_SECRET_KEY MNQ_ACCESS_KEY MNQ_SECRET_KEY)
           SECRET_ARGS=(); i=0
           for nom in "${_SECRETS[@]}"; do
             SECRET_ARGS+=("secret-environment-variables.$i.key=$nom"
                           "secret-environment-variables.$i.value=${!nom:?Secret $nom requis}")
             i=$((i+1))
           done
+
+          # Scaleway réserve le préfixe SCW_ aux variables des fonctions (« A reserved
+          # environment variable is used »). Refuser avant tout appel, pour ne pas
+          # découvrir l'erreur au milieu du déploiement.
+          RESERVES=$(printf '%s\n' "${ENV_ARGS[@]%%=*}" "${_SECRETS[@]}" \
+            | sed 's/^environment-variables\.//' | grep '^SCW_' || true)
+          if [ -n "$RESERVES" ]; then
+            echo "::error::Préfixe SCW_ réservé par Scaleway Functions : $(echo $RESERVES)"
+            exit 1
+          fi
 
           NS_ID=$(scw function namespace list project-id="$SCW_DEFAULT_PROJECT_ID" region="$SCW_DEFAULT_REGION" -o json \
             | python3 -c "import sys,json;print(next(n['id'] for n in json.load(sys.stdin) if n['name']=='mirador'))")

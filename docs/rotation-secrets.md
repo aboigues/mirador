@@ -26,7 +26,7 @@ ont disparu avec lui. La rotation reste recommandée par hygiène.
 | `ANTHROPIC_API_KEY` | ✅ | Facturation API Claude |
 | `GITHUB_APP_PRIVATE_KEY` | ✅ | **Identité de la GitHub App** sur les dépôts de l'installation |
 | `WEBHOOK_SECRET` | ✅ | Forger des webhooks signés → faire agir Mirador |
-| `SCW_S3_ACCESS_KEY` / `SCW_S3_SECRET_KEY` (ex-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) | ✅ | Bucket d'audit (`SCW0C45PRGYFEYX53AN8`, app IAM `mirador`) |
+| `SCALEWAY_S3_ACCESS_KEY` / `SCALEWAY_S3_SECRET_KEY` (ex-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) | ✅ | Bucket d'audit (`SCW0C45PRGYFEYX53AN8`, app IAM `mirador`) |
 | `MNQ_ACCESS_KEY` / `MNQ_SECRET_KEY` | ✅ | File de messages (credential `mirador`, `39cdedeb`) |
 | `SCW_DEPLOY_ACCESS_KEY` / `SCW_DEPLOY_SECRET_KEY` (ex-`SCW_ACCESS_KEY` / `SCW_SECRET_KEY`) / `SCW_PROJECT_ID` | ❌ | **Non exposées** — créées après (PR #14). |
 
@@ -133,19 +133,19 @@ scw iam api-key create \
 Valider (lecture seule sur le bucket) :
 
 ```bash
-SCW_S3_ACCESS_KEY=NOUVELLE SCW_S3_SECRET_KEY=NOUVELLE_SECRET \
+SCALEWAY_S3_ACCESS_KEY=NOUVELLE SCALEWAY_S3_SECRET_KEY=NOUVELLE_SECRET \
 .venv/bin/python - <<'PY'
 import boto3
 import os
 s3 = boto3.client("s3", endpoint_url="https://s3.fr-par.scw.cloud", region_name="fr-par",
-                  aws_access_key_id=os.environ["SCW_S3_ACCESS_KEY"],
-                  aws_secret_access_key=os.environ["SCW_S3_SECRET_KEY"])
+                  aws_access_key_id=os.environ["SCALEWAY_S3_ACCESS_KEY"],
+                  aws_secret_access_key=os.environ["SCALEWAY_S3_SECRET_KEY"])
 s3.head_object(Bucket="telemach-mirador-audit", Key="mirador.db")
 print("✓ accès bucket OK")
 PY
 ```
 
-Mettre à jour les Secrets **`SCW_S3_ACCESS_KEY`** et **`SCW_S3_SECRET_KEY`** → lancer
+Mettre à jour les Secrets **`SCALEWAY_S3_ACCESS_KEY`** et **`SCALEWAY_S3_SECRET_KEY`** → lancer
 `deploy-config.yml` → vérifier → **puis** :
 
 ```bash
