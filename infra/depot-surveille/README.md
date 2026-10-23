@@ -47,8 +47,10 @@ les passe en entrée. Le workflow :
    et **les filtres de la barrière du dépôt** ;
 2. retient, par image, le candidat qui fait **strictement baisser** le nombre de
    CVE bloquantes ;
-3. remplace la référence dans les fichiers suivis, ouvre la PR avec le tableau des
-   mesures pour corps (le corps ne peut plus contredire le diff) ;
+3. remplace la référence dans les fichiers suivis et pousse la branche
+   `mirador/fix-<run>`, avec le tableau des mesures dans le message du commit ;
+   à la fin du run, **Mirador ouvre la PR** avec ce titre et ce corps (le corps
+   ne peut plus contredire le diff), et la signale dans l'Issue ;
 4. sinon, publie le tableau dans l'Issue Mirador (rouverte) ou en ouvre une :
    aucun tag publié ne corrige, correctif amont attendu.
 
@@ -67,5 +69,10 @@ quoi la mesure ne prédit pas ce que la barrière bloquera :
 | `IGNORE_UNFIXED` | `true` |
 | `TRIVY_VERSION` | la même que la barrière (`v0.72.0`) |
 
-Prérequis identiques à `mirador-autofix.yml`, plus la permission `issues: write`
-(déclarée dans le workflow) pour publier une abstention.
+Contrairement à `mirador-autofix.yml`, ce workflow n'exige **pas** le réglage
+« Allow GitHub Actions to create and approve pull requests » : il ne fait que
+pousser une branche. La PR est ouverte par la GitHub App Mirador, qui reconnaît
+le run à son chemin (`.github/workflows/mirador-mesure-images.yml`) et retrouve
+la branche dans son `run-name`. Le fichier doit donc garder ce nom et ce
+`run-name`. Permissions déclarées : `contents: write` (push de la branche) et
+`issues: write` (publication d'une abstention).

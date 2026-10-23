@@ -11,8 +11,10 @@ Toutes les dépendances sont injectées pour rester testable et découplé des I
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -50,6 +52,12 @@ _WORKFLOW_AUTOFIX = "mirador-autofix.yml"
 # surveillé (Trivy), puis ouvre la PR — ou publie le tableau des mesures si
 # aucun tag publié ne fait baisser les CVE bloquantes (kubernetes-formation#216).
 _WORKFLOW_MESURE_IMAGES = "mirador-mesure-images.yml"
+_CHEMIN_WORKFLOW_MESURE = f".github/workflows/{_WORKFLOW_MESURE_IMAGES}"
+# `run-name` du workflow de mesure : il porte la branche poussée, que le
+# payload workflow_run ne donne pas (son head_branch est la branche de base).
+_PATTERN_RUN_MESURE = re.compile(r"^Mirador Mesure Images — (mirador/fix-\d+)$")
+# Trailers du commit de mesure : rattachent la PR à l'anomalie et à l'Issue.
+_PATTERN_TRAILER = re.compile(r"^Mirador-(Anomalie|Issue): (\S+)$")
 # Reconstruit et republie les images durcies du dépôt (docker/hardened/) avec
 # les paquets OS à jour — seul correctif possible pour une CVE de paquet OS
 # dans une image que le dépôt construit lui-même (pas de fichier à éditer).
@@ -140,6 +148,13 @@ class Traitement:
             return
         depot, regles = resolu
         if not depot.actif:
+            return
+        if (
+            message.get("workflow_chemin") == _CHEMIN_WORKFLOW_MESURE
+            and message.get("conclusion") == "success"
+        ):
+            # Un échec de la mesure, lui, suit le chemin normal d'analyse.
+            await self._ouvrir_pull_request_mesuree(message, depot, depot_nom)
             return
 
         extrait_log, noms_jobs = await self._recuperer_extrait_log(
@@ -396,6 +411,7 @@ class Traitement:
             action = await self._ouvrir_pull_request_correctif(
                 proposition.model_dump(), depot, depot_nom,
                 anomalie.workflow_run_id, anomalie_branche(anomalie),
+                anomalie_id=str(anomalie.correlation_id),
             )
         elif proposition.type == TypeCorrection.REBUILD_IMAGES:
             await self._actions.declencher_workflow(
@@ -518,6 +534,7 @@ class Traitement:
                     proposition, depot, depot_nom, run_id,
                     details.get("head_branch", "main"),
                     issue=message.get("issue_number"),
+                    anomalie_id=message.get("anomalie_id"),
                 )
             if proposition.get("type") == TypeCorrection.REBUILD_IMAGES:
                 await self._actions.declencher_workflow(
@@ -538,6 +555,7 @@ class Traitement:
     async def _ouvrir_pull_request_correctif(
         self, proposition: dict[str, Any], depot: Any, depot_nom: str,
         run_id: Any, branche_cible: str, issue: Optional[int] = None,
+        anomalie_id: Optional[str] = None,
     ) -> str:
         """Matérialise le correctif et retourne le type d'action réalisé.
 
@@ -548,9 +566,11 @@ class Traitement:
            qui MESURE les tags publiés (Trivy, filtres de la barrière) et
            n'ouvre la PR que si l'un d'eux fait baisser les CVE bloquantes.
            Le tag écrit par le Correcteur n'est jamais repris : il le tirait
-           de ses données d'entraînement (kubernetes-formation#216). Sur
-           abstention, le workflow publie ses mesures dans `issue` s'il y en
-           a une, sinon dans une nouvelle Issue.
+           de ses données d'entraînement (kubernetes-formation#216). Le
+           workflow pousse la branche, Mirador ouvre la PR à la fin du run
+           (`_ouvrir_pull_request_mesuree`). Sur abstention, le workflow
+           publie ses mesures dans `issue` s'il y en a une, sinon dans une
+           nouvelle Issue.
         3. Autres `fichiers` → crée la branche, écrit les fichiers, ouvre la PR.
 
         Sans l'une ou l'autre, il n'y a rien à matérialiser : retourne
@@ -593,6 +613,7 @@ class Traitement:
                         [cible.pour_workflow() for cible in cibles], ensure_ascii=False
                     ),
                     "issue": str(issue) if issue is not None else "",
+                    "anomalie": anomalie_id or "",
                 },
                 inst,
             )
@@ -613,6 +634,64 @@ class Traitement:
             branche_cible=branche_cible,
         )
         return TypeCorrection.PULL_REQUEST
+
+    async def _ouvrir_pull_request_mesuree(
+        self, message: dict[str, Any], depot: Any, depot_nom: str
+    ) -> None:
+        """Ouvre la PR de la branche poussée par un run réussi de
+        mirador-mesure-images.yml.
+
+        C'est Mirador, et non le workflow, qui l'ouvre : le dépôt surveillé
+        n'autorise pas Actions à créer des PR (choix assumé, le réglage
+        permettrait aussi d'en approuver). Titre et corps viennent du message
+        du commit, écrit par le workflow à partir des mesures. Sans branche,
+        le workflow s'est abstenu et a déjà publié ses mesures : rien à faire.
+        """
+        correspondance = _PATTERN_RUN_MESURE.match(message.get("titre_run", ""))
+        if correspondance is None:
+            log.warning("mesure.branche_hors_perimetre", depot=depot_nom,
+                        titre_run=message.get("titre_run"))
+            return
+        branche = correspondance.group(1)
+        inst = depot.installation_id
+        message_commit = await self._actions.message_commit_tete(depot_nom, branche, inst)
+        if message_commit is None:
+            log.info("mesure.abstention", depot=depot_nom, branche=branche)
+            return
+
+        titre, corps, trailers = _decouper_message_commit(message_commit)
+        issue = trailers.get("Issue")
+        if issue is not None and not issue.isdigit():
+            issue = None
+        if issue is not None:
+            corps += f"\n\nIssue Mirador : #{issue}"
+        pr = await self._actions.creer_pull_request(
+            depot_nom, inst, titre=titre, corps=corps,
+            branche_source=branche, branche_cible=message.get("head_branch") or "main",
+        )
+        if issue is not None:
+            await self._actions.commenter_issue(
+                depot_nom, inst, int(issue),
+                f"Pull request ouverte à partir des mesures : {pr.get('html_url')}",
+            )
+        try:
+            correlation_id = UUID(trailers.get("Anomalie", ""))
+        except ValueError:
+            correlation_id = uuid4()
+        self._writer.ecrire([EvenementJournal(
+            correlation_id=correlation_id,
+            type_evenement=TypeEvenement.INTERVENTION,
+            # Le niveau de l'anomalie d'origine n'est pas connu ici ; l'ouverture
+            # d'une PR à relire n'en ajoute aucun.
+            niveau_risque="INFO",
+            depot=depot_nom,
+            acteur=_ACTEUR_AGENT,
+            statut="SUCCÈS",
+            workflow_run_id=message.get("workflow_run_id"),
+            type_action=TypeCorrection.PULL_REQUEST,
+            details={"branche": branche, "pull_request": pr.get("html_url")},
+            delivery_id=self._delivery_courant,
+        )])
 
     async def _cibles_mesure(
         self, proposition: dict[str, Any], depot_nom: str, branche: str,
@@ -698,6 +777,16 @@ class Traitement:
             resultat=resultat,
             delivery_id=self._delivery_courant,
         )])
+
+
+def _decouper_message_commit(message: str) -> tuple[str, str, dict[str, str]]:
+    """(titre, corps, trailers Mirador-*) d'un message de commit de mesure."""
+    lignes = message.rstrip("\n").split("\n")
+    trailers: dict[str, str] = {}
+    while lignes and (correspondance := _PATTERN_TRAILER.match(lignes[-1])):
+        trailers[correspondance.group(1)] = correspondance.group(2)
+        lignes.pop()
+    return lignes[0], "\n".join(lignes[1:]).strip(), trailers
 
 
 def _message_approbation(acteur: str, action: Optional[str]) -> str:

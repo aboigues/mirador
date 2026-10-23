@@ -82,6 +82,8 @@ def _construire_message_workflow_run(payload: dict[str, Any], delivery_id: str) 
         "depot": repository.get("full_name", ""),
         "workflow_run_id": workflow_run.get("id"),
         "workflow_nom": workflow_run.get("name", ""),
+        "workflow_chemin": workflow_run.get("path", ""),
+        "titre_run": workflow_run.get("display_title", ""),
         "conclusion": workflow_run.get("conclusion", ""),
         "head_branch": workflow_run.get("head_branch", ""),
         "head_sha": workflow_run.get("head_sha", ""),

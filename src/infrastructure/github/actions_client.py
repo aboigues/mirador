@@ -411,6 +411,24 @@ class GitHubActionsClient:
         )
         return reponse.json()["object"]["sha"]
 
+    async def message_commit_tete(
+        self, depot: str, branche: str, installation_id: int
+    ) -> Optional[str]:
+        """Message du dernier commit de `branche`, ou None si elle n'existe pas.
+
+        L'API répond 422 (« No commit found for SHA ») pour une branche absente,
+        constaté le 2026-10-23 ; 404 est traité de même par prudence.
+        """
+        try:
+            reponse = await self._requete(
+                "GET", f"/repos/{depot}/commits/{branche}", installation_id
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (404, 422):
+                return None
+            raise
+        return reponse.json()["commit"]["message"]
+
     async def creer_branche(
         self, depot: str, nom_branche: str, sha_base: str, installation_id: int
     ) -> None:

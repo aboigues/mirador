@@ -124,6 +124,12 @@ class _ActionsFake:
         self.appels_lister_fichiers: list = []
         self.appels_lire_fichier: list = []
         self.appels_chercher_code: list = []
+        self.commits: dict = {}  # branche → message du commit de tête
+        self.appels_commit_tete: list = []
+
+    async def message_commit_tete(self, depot, branche, installation_id):
+        self.appels_commit_tete.append(branche)
+        return self.commits.get(branche)
 
     async def telecharger_logs(self, depot, run_id, installation_id) -> bytes:
         return self._logs
@@ -932,6 +938,7 @@ class TestTagsImageMesures:
         assert w["inputs"]["base_branch"] == "main"
         assert w["inputs"]["head_branch"] == "mirador/fix-12345678"
         assert w["inputs"]["issue"] == ""
+        assert w["inputs"]["anomalie"] == str(intervention_correlation(writer))
         assert json.loads(w["inputs"]["images"]) == self.IMAGES_ATTENDUES
         assert "11.4.0" not in json.dumps(w) and "3.14.0" not in json.dumps(w)
         intervention = next(e for e in writer.evenements
@@ -951,6 +958,7 @@ class TestTagsImageMesures:
         w = actions.workflows[0]
         assert w["inputs"]["head_branch"] == "mirador/fix-39931391901"
         assert w["inputs"]["issue"] == "42"
+        assert w["inputs"]["anomalie"] == _message_validation_anomalie_id(writer)
         assert json.loads(w["inputs"]["images"]) == self.IMAGES_ATTENDUES
         assert "mesur" in actions.commentaires[0]["corps"].lower()
         assert actions.fermetures[0]["label"] == "resolved"
@@ -985,3 +993,111 @@ class TestTagsImageMesures:
             {"image": "alpine/helm", "actuel": "3.22.0", "candidats": []},
         ]
         assert actions.prs == []
+
+
+def intervention_correlation(writer):
+    return next(e.correlation_id for e in writer.evenements
+                if e.type_evenement == TypeEvenement.INTERVENTION)
+
+
+def _message_validation_anomalie_id(writer) -> str:
+    return str(next(e.correlation_id for e in writer.evenements
+                    if e.type_evenement == TypeEvenement.VALIDATION))
+
+
+ANOMALIE_216 = "0b9e3f5c-6a1d-4c2e-9f7a-3d2b1c0e8f47"
+MESSAGE_COMMIT_MESURE = (
+    "fix(images): grafana/grafana 13.2.1 → 13.2.4, alpine/helm 3.22.0 → 3.22.1 (tags mesurés)\n"
+    "\n"
+    "## Mesures\n"
+    "\n"
+    "| Image | Tag | CVE bloquantes | |\n"
+    "|---|---|---|---|\n"
+    "| `grafana/grafana` | 13.2.1 (en place) | 2 | |\n"
+    "| `grafana/grafana` | **13.2.4** | **0** | ✅ retenu |\n"
+    "\n"
+    f"Mirador-Anomalie: {ANOMALIE_216}\n"
+    "Mirador-Issue: 217\n"
+)
+
+
+def _message_fin_mesure(*, conclusion="success",
+                        titre_run="Mirador Mesure Images — mirador/fix-39931391901",
+                        chemin=".github/workflows/mirador-mesure-images.yml") -> dict:
+    message = _message_workflow(conclusion=conclusion, head_branch="main")
+    message.update(workflow_nom="Mirador Mesure Images", workflow_chemin=chemin,
+                   titre_run=titre_run, workflow_run_id=39940000000)
+    return message
+
+
+class TestPullRequestApresMesure:
+    """Le dépôt surveillé n'autorise pas Actions à créer des PR (réglage
+    « Allow GitHub Actions to create and approve pull requests » désactivé,
+    choix assumé). mirador-mesure-images.yml pousse donc la branche, et c'est
+    Mirador qui ouvre la PR à la fin du run, avec le jeton de sa GitHub App.
+    Titre et corps viennent du message du commit : ils dérivent des mesures.
+    """
+
+    async def test_ouvre_la_pr_a_partir_du_commit_de_mesure(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.commits["mirador/fix-39931391901"] = MESSAGE_COMMIT_MESURE
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        traitement = _traitement(actions, writer, correcteur)
+        await traitement.traiter(_message_fin_mesure())
+
+        assert correcteur.appels == 0
+        assert len(actions.prs) == 1
+        pr = actions.prs[0]
+        assert pr["branche_source"] == "mirador/fix-39931391901"
+        assert pr["branche_cible"] == "main"
+        assert pr["titre"].startswith("fix(images): grafana/grafana 13.2.1 → 13.2.4")
+        assert "| `grafana/grafana` | **13.2.4** | **0** | ✅ retenu |" in pr["corps"]
+        assert "Mirador-Issue" not in pr["corps"] and "Mirador-Anomalie" not in pr["corps"]
+        assert "#217" in pr["corps"]
+        assert actions.commentaires == [{
+            "numero": 217,
+            "corps": "Pull request ouverte à partir des mesures : https://github.com/x/pull/7",
+        }]
+        evenement = writer.evenements[-1]
+        assert evenement.type_evenement == TypeEvenement.INTERVENTION
+        assert evenement.type_action == TypeCorrection.PULL_REQUEST
+        assert str(evenement.correlation_id) == ANOMALIE_216
+        assert actions.issues_ouvertes == []
+
+    async def test_sans_issue_ouvre_la_pr_sans_commenter(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.commits["mirador/fix-39931391901"] = MESSAGE_COMMIT_MESURE.replace(
+            "Mirador-Issue: 217\n", "")
+        traitement = _traitement(actions, writer, _CorrecteurFake(None))
+        await traitement.traiter(_message_fin_mesure())
+        assert len(actions.prs) == 1 and "#217" not in actions.prs[0]["corps"]
+        assert actions.commentaires == []
+
+    async def test_abstention_sans_branche_ne_fait_rien(self):
+        # Le workflow a déjà publié ses mesures dans l'Issue : rien à ouvrir.
+        actions, writer = _ActionsFake(), _WriterFake()
+        correcteur = _CorrecteurFake(None)
+        traitement = _traitement(actions, writer, correcteur)
+        await traitement.traiter(_message_fin_mesure())
+        assert actions.appels_commit_tete == ["mirador/fix-39931391901"]
+        assert actions.prs == [] and actions.issues_ouvertes == []
+        assert correcteur.appels == 0
+
+    @pytest.mark.parametrize("titre_run", [
+        "Mirador Mesure Images — main",
+        "Mirador Mesure Images — mirador/../main",
+        "Mirador Mesure Images",
+    ])
+    async def test_branche_hors_perimetre_ignoree(self, titre_run):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.commits["main"] = MESSAGE_COMMIT_MESURE
+        traitement = _traitement(actions, writer, _CorrecteurFake(None))
+        await traitement.traiter(_message_fin_mesure(titre_run=titre_run))
+        assert actions.appels_commit_tete == [] and actions.prs == []
+
+    async def test_un_autre_workflow_reussi_ne_declenche_rien(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.commits["mirador/fix-39931391901"] = MESSAGE_COMMIT_MESURE
+        traitement = _traitement(actions, writer, _CorrecteurFake(None))
+        await traitement.traiter(_message_fin_mesure(chemin=".github/workflows/ci.yml"))
+        assert actions.appels_commit_tete == [] and actions.prs == []
