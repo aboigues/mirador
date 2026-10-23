@@ -268,3 +268,30 @@ class TestLectureDepot:
             return_value=httpx.Response(200, json={"items": []})
         )
         assert await client.chercher_code(DEPOT, "introuvable:1.0", INSTALLATION_ID) == []
+
+
+class TestMessageCommitTete:
+    """Message du commit de tête d'une branche : c'est par lui que
+    mirador-mesure-images.yml transmet le titre et le corps de la PR."""
+
+    @respx.mock
+    async def test_message_du_dernier_commit(self, client):
+        respx.get(_url("/commits/mirador/fix-1")).mock(return_value=httpx.Response(
+            200, json={"sha": "abc", "commit": {"message": "fix(images): x\n\n## Mesures"}}
+        ))
+        message = await client.message_commit_tete(DEPOT, "mirador/fix-1", INSTALLATION_ID)
+        assert message == "fix(images): x\n\n## Mesures"
+
+    @respx.mock
+    async def test_branche_absente_retourne_none(self, client):
+        # Abstention : le workflow n'a poussé aucune branche.
+        respx.get(_url("/commits/mirador/fix-1")).mock(
+            return_value=httpx.Response(422, json={"message": "No commit found for SHA"})
+        )
+        assert await client.message_commit_tete(DEPOT, "mirador/fix-1", INSTALLATION_ID) is None
+
+    @respx.mock
+    async def test_autre_erreur_remonte(self, client):
+        respx.get(_url("/commits/mirador/fix-1")).mock(return_value=httpx.Response(500))
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.message_commit_tete(DEPOT, "mirador/fix-1", INSTALLATION_ID)

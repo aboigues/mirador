@@ -163,3 +163,22 @@ class TestWebhookHMAC:
             },
         )
         assert resp.status_code == 400
+
+
+class TestMessageWorkflowRun:
+    def test_transporte_le_chemin_et_le_titre_du_run(self):
+        # Nécessaires pour reconnaître un run de mirador-mesure-images.yml et
+        # retrouver la branche qu'il a poussée (son `run-name` la porte).
+        from src.gestionnaires.webhook import traiter_webhook_brut
+
+        payload = _payload_valide()
+        payload["workflow_run"]["path"] = ".github/workflows/mirador-mesure-images.yml"
+        payload["workflow_run"]["display_title"] = "Mirador Mesure Images — mirador/fix-1"
+        body = json.dumps(payload).encode()
+        code, message = traiter_webhook_brut(
+            body, "workflow_run", _signer(body, WEBHOOK_SECRET), "d-1",
+            WEBHOOK_SECRET, lambda _depot: [],
+        )
+        assert code == 202
+        assert message["workflow_chemin"] == ".github/workflows/mirador-mesure-images.yml"
+        assert message["titre_run"] == "Mirador Mesure Images — mirador/fix-1"
