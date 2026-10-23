@@ -84,8 +84,9 @@ The level is decided by the **Detector** (deterministic rules, no LLM call); the
 2. An owner comments `/approuver` or `/rejeter <reason>` — the identity is checked against the repository's `responsables` (owners).
 3. `/approuver` reloads the persisted proposal and **actually executes it**:
    - **Go dependency update** → triggers `mirador-autofix.yml` in the monitored repository, which regenerates `go.mod`/`go.sum` through a **real build** and opens the PR (the only way to get a fix that passes CI — `go.sum` cannot be computed without a build);
-   - **files provided** → creates the `mirador/fix-<run>` branch, writes the files, opens the PR;
-   - otherwise → documentation PR (`MIRADOR-FIX.md`) for a human to complete.
+   - **image tag change** → Mirador does not reuse the tag Claude wrote: it lists the tags published on Docker Hub in the same line (never backwards) and triggers `mirador-mesure-images.yml`, which measures them with Trivy and the repository's gate filters. The PR is opened only if a tag strictly lowers the number of blocking CVEs, with the measurement table as its body; otherwise that table is posted to the Issue (real case: kubernetes-formation#216, where an invented tag took the gate from 7 to 43 blocking CVEs);
+   - **other files provided** → creates the `mirador/fix-<run>` branch, writes the files, opens the PR;
+   - otherwise → no PR: the fix is to be applied by hand from the Issue.
 4. If execution fails, the approval stands: the issue is closed with an honest message rather than crashing.
 
 **If the Fixer is unavailable** (API outage, credits exhausted), the Issue is opened **anyway**, flagged "Analyse indisponible" (analysis unavailable). Detection does not depend on Claude being available.
@@ -175,7 +176,7 @@ Runs triggered from a **fork** (pull requests from outside contributors) are ign
 
 `seuil_timeout_secondes` (timeout threshold, in seconds) should match the repository's real durations: it reclassifies an abnormally slow failure as `TIMEOUT`. Set too low, it turns an ordinary failure into an alert; it has no effect on detecting the failures themselves.
 
-For `/approuver` to materialise a dependency fix, copy `infra/depot-surveille/mirador-autofix.yml` into the monitored repository and allow Actions to create PRs (Settings → Actions → *Allow GitHub Actions to create and approve pull requests*).
+For `/approuver` to materialise a dependency fix, copy `infra/depot-surveille/mirador-autofix.yml` into the monitored repository and allow Actions to create PRs (Settings → Actions → *Allow GitHub Actions to create and approve pull requests*). For an image bump, also copy `infra/depot-surveille/mirador-mesure-images.yml`, aligning its filters with the repository's gate (see `infra/depot-surveille/README.md`).
 
 ---
 

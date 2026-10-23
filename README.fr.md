@@ -82,8 +82,9 @@ Le niveau est décidé par le **Détecteur** (règles déterministes, sans appel
 2. Un responsable commente `/approuver` ou `/rejeter <motif>` — l'identité est vérifiée contre les `responsables` du dépôt.
 3. `/approuver` relit la proposition persistée et **l'exécute réellement** :
    - **mise à jour de dépendances Go** → déclenche `mirador-autofix.yml` dans le dépôt surveillé, qui régénère `go.mod`/`go.sum` par un **vrai build** et ouvre la PR (seule voie pour un correctif qui passe la CI — `go.sum` n'est pas calculable sans build) ;
-   - **fichiers fournis** → crée la branche `mirador/fix-<run>`, écrit les fichiers, ouvre la PR ;
-   - sinon → PR documentaire (`MIRADOR-FIX.md`) à compléter par un humain.
+   - **changement de tag d'image** → Mirador ne reprend pas le tag écrit par Claude : il liste les tags publiés sur Docker Hub dans la même ligne (jamais en arrière) et déclenche `mirador-mesure-images.yml`, qui les mesure avec Trivy et les filtres de la barrière du dépôt. La PR n'est ouverte que si un tag fait strictement baisser les CVE bloquantes, avec le tableau des mesures pour corps ; sinon, ce tableau est publié dans l'Issue (cas réel : kubernetes-formation#216, où un tag inventé faisait passer la barrière de 7 à 43 CVE bloquantes) ;
+   - **autres fichiers fournis** → crée la branche `mirador/fix-<run>`, écrit les fichiers, ouvre la PR ;
+   - sinon → aucune PR : le correctif est à appliquer à la main d'après l'Issue.
 4. Si l'exécution échoue, l'approbation reste valable : l'issue est fermée avec un message honnête plutôt qu'un plantage.
 
 **Si le Correcteur est indisponible** (panne API, crédits épuisés), l'Issue est ouverte **quand même**, en signalant « Analyse indisponible ». La détection ne dépend pas de la disponibilité de Claude.
@@ -171,7 +172,7 @@ Les runs déclenchés depuis un **fork** (pull requests de contributeurs extéri
 
 `seuil_timeout_secondes` se cale sur les durées réelles du dépôt : il requalifie en `TIMEOUT` un échec anormalement lent. Trop bas, il transforme un échec ordinaire en alerte ; il n'a aucun effet sur la détection des échecs eux-mêmes.
 
-Pour que `/approuver` puisse matérialiser un correctif de dépendances, copier `infra/depot-surveille/mirador-autofix.yml` dans le dépôt surveillé et autoriser Actions à créer des PR (Settings → Actions → *Allow GitHub Actions to create and approve pull requests*).
+Pour que `/approuver` puisse matérialiser un correctif de dépendances, copier `infra/depot-surveille/mirador-autofix.yml` dans le dépôt surveillé et autoriser Actions à créer des PR (Settings → Actions → *Allow GitHub Actions to create and approve pull requests*). Pour un bump d'image, copier aussi `infra/depot-surveille/mirador-mesure-images.yml`, en alignant ses filtres sur la barrière du dépôt (voir `infra/depot-surveille/README.md`).
 
 ---
 
