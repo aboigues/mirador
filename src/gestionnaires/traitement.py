@@ -10,6 +10,8 @@ Toutes les dépendances sont injectées pour rester testable et découplé des I
 """
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 import structlog
@@ -19,6 +21,13 @@ from src.agents.superviseur import DecisionEscalade
 from src.domaine.anomalie import Anomalie
 from src.domaine.journal import EvenementJournal, TypeEvenement
 from src.domaine.regle import RegleDiagnostic
+from src.domaine.tag_image import (
+    candidats,
+    changements_images,
+    est_retrogradation,
+    nom_docker_hub,
+    prefixe_recherche,
+)
 from src.infrastructure.github.actions_client import (
     assembler_contexte_depot,
     assembler_extrait_jobs,
@@ -35,7 +44,12 @@ _ACTION_ECHEC = "ÉCHEC_EXÉCUTION"
 _ACTION_PR_CONSTRUCTION = "PR_EN_CONSTRUCTION"
 _ACTION_ABSTENTION = "ABSTENTION"
 _ACTION_NON_MATERIALISABLE = "CORRECTIF_NON_MATERIALISABLE"
+_ACTION_MESURE_TAGS = "MESURE_TAGS_EN_COURS"
 _WORKFLOW_AUTOFIX = "mirador-autofix.yml"
+# Mesure les tags candidats d'une image avec les filtres de la barrière du dépôt
+# surveillé (Trivy), puis ouvre la PR — ou publie le tableau des mesures si
+# aucun tag publié ne fait baisser les CVE bloquantes (kubernetes-formation#216).
+_WORKFLOW_MESURE_IMAGES = "mirador-mesure-images.yml"
 # Reconstruit et republie les images durcies du dépôt (docker/hardened/) avec
 # les paquets OS à jour — seul correctif possible pour une CVE de paquet OS
 # dans une image que le dépôt construit lui-même (pas de fichier à éditer).
@@ -61,6 +75,19 @@ _MAX_TAILLE_FICHIER_CONTEXTE = 20_000
 _A_CALCULER = object()
 
 
+@dataclass
+class _CibleMesure:
+    """Image dont le correctif change le tag : le tag en place, celui écrit par
+    le Correcteur (jamais repris tel quel) et les tags publiés à mesurer."""
+    image: str
+    actuel: str
+    propose: str
+    candidats: list[str]
+
+    def pour_workflow(self) -> dict[str, Any]:
+        return {"image": self.image, "actuel": self.actuel, "candidats": self.candidats}
+
+
 class Traitement:
     def __init__(
         self,
@@ -73,6 +100,7 @@ class Traitement:
         resoudre_depot: Callable[[str], Optional[tuple[Any, list[RegleDiagnostic]]]],
         deja_traite: Optional[Callable[[str], bool]] = None,
         lire_proposition: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
+        registre: Any = None,
     ) -> None:
         self._detecteur = detecteur
         self._superviseur = superviseur
@@ -82,6 +110,7 @@ class Traitement:
         self._resoudre_depot = resoudre_depot
         self._deja_traite = deja_traite
         self._lire_proposition = lire_proposition
+        self._registre = registre
         self._delivery_courant: Optional[str] = None
 
     async def traiter(self, message: dict[str, Any]) -> None:
@@ -397,7 +426,17 @@ class Traitement:
         if proposition is _A_CALCULER:
             proposition = await self._proposer(anomalie, extrait_log, regles, depot, depot_nom, noms_jobs)
 
-        corps = _corps_issue(anomalie, depot_nom, proposition)
+        cibles = None
+        if proposition is not None and proposition.type == TypeCorrection.PULL_REQUEST:
+            try:
+                cibles = await self._cibles_mesure(
+                    proposition.model_dump(), depot_nom,
+                    anomalie_branche(anomalie), depot.installation_id,
+                )
+            except Exception as exc:
+                log.warning("escalade.cibles_mesure_indisponibles",
+                            anomalie_id=str(anomalie.id), err=str(exc))
+        corps = _corps_issue(anomalie, depot_nom, proposition, cibles)
         await self._actions.ouvrir_issue(
             depot_nom, depot.installation_id,
             titre=f"[Mirador] Anomalie {anomalie.niveau_risque.name} — "
@@ -478,6 +517,7 @@ class Traitement:
                 return await self._ouvrir_pull_request_correctif(
                     proposition, depot, depot_nom, run_id,
                     details.get("head_branch", "main"),
+                    issue=message.get("issue_number"),
                 )
             if proposition.get("type") == TypeCorrection.REBUILD_IMAGES:
                 await self._actions.declencher_workflow(
@@ -497,14 +537,21 @@ class Traitement:
 
     async def _ouvrir_pull_request_correctif(
         self, proposition: dict[str, Any], depot: Any, depot_nom: str,
-        run_id: Any, branche_cible: str,
+        run_id: Any, branche_cible: str, issue: Optional[int] = None,
     ) -> str:
         """Matérialise le correctif et retourne le type d'action réalisé.
 
-        Deux voies, par ordre de préférence :
+        Trois voies, par ordre de préférence :
         1. `mise_a_jour` (deps Go) → délègue à un workflow de build réel qui
            régénère go.mod/go.sum et ouvre la PR (→ correctif qui passe la CI).
-        2. `fichiers` fournis → crée la branche, écrit les fichiers, ouvre la PR.
+        2. `fichiers` qui changent le tag d'une image → délègue à un workflow
+           qui MESURE les tags publiés (Trivy, filtres de la barrière) et
+           n'ouvre la PR que si l'un d'eux fait baisser les CVE bloquantes.
+           Le tag écrit par le Correcteur n'est jamais repris : il le tirait
+           de ses données d'entraînement (kubernetes-formation#216). Sur
+           abstention, le workflow publie ses mesures dans `issue` s'il y en
+           a une, sinon dans une nouvelle Issue.
+        3. Autres `fichiers` → crée la branche, écrit les fichiers, ouvre la PR.
 
         Sans l'une ou l'autre, il n'y a rien à matérialiser : retourne
         `_ACTION_NON_MATERIALISABLE` sans toucher au dépôt. Une PR sans diff
@@ -535,6 +582,22 @@ class Traitement:
         if not fichiers:
             return _ACTION_NON_MATERIALISABLE
 
+        cibles = await self._cibles_mesure(proposition, depot_nom, branche_cible, inst)
+        if cibles:
+            await self._actions.declencher_workflow(
+                depot_nom, _WORKFLOW_MESURE_IMAGES, branche_cible,
+                {
+                    "base_branch": branche_cible,
+                    "head_branch": branche,
+                    "images": json.dumps(
+                        [cible.pour_workflow() for cible in cibles], ensure_ascii=False
+                    ),
+                    "issue": str(issue) if issue is not None else "",
+                },
+                inst,
+            )
+            return _ACTION_MESURE_TAGS
+
         sha_base = await self._actions.obtenir_sha_tete(depot_nom, branche_cible, inst)
         await self._actions.creer_branche(depot_nom, branche, sha_base, inst)
         for fichier in fichiers:
@@ -550,6 +613,53 @@ class Traitement:
             branche_cible=branche_cible,
         )
         return TypeCorrection.PULL_REQUEST
+
+    async def _cibles_mesure(
+        self, proposition: dict[str, Any], depot_nom: str, branche: str,
+        installation_id: int,
+    ) -> list[_CibleMesure]:
+        """Images dont les `fichiers` proposés changent le tag, comparés au
+        contenu actuel de `branche`, avec les tags publiés à mesurer.
+
+        Liste vide si le correctif ne touche aucune référence d'image : il se
+        matérialise alors tel quel.
+        """
+        cibles: dict[tuple[str, str], _CibleMesure] = {}
+        for fichier in proposition.get("fichiers") or []:
+            avant = await self._actions.lire_fichier(
+                depot_nom, fichier["chemin"], branche, installation_id
+            )
+            for changement in changements_images(avant, fichier["contenu"]):
+                cle = (changement.image, changement.ancien)
+                if cle in cibles:
+                    continue
+                if est_retrogradation(changement.ancien, changement.nouveau):
+                    log.warning("correcteur.retrogradation_rejetee", depot=depot_nom,
+                                image=changement.image, actuel=changement.ancien,
+                                propose=changement.nouveau)
+                cibles[cle] = _CibleMesure(
+                    image=changement.image,
+                    actuel=changement.ancien,
+                    propose=changement.nouveau,
+                    candidats=await self._tags_candidats(changement.image, changement.ancien),
+                )
+        return list(cibles.values())
+
+    async def _tags_candidats(self, image: str, actuel: str) -> list[str]:
+        """Tags publiés de la même ligne que `actuel` (cf. `candidats`).
+
+        Best-effort : sans registre joignable, la liste est vide et le workflow
+        mesure le seul tag en place — de quoi documenter l'abstention.
+        """
+        nom, filtre = nom_docker_hub(image), prefixe_recherche(actuel)
+        if self._registre is None or nom is None or filtre is None:
+            return []
+        try:
+            publies = await self._registre.lister_tags(nom, filtre)
+        except Exception as exc:
+            log.warning("registre.tags_indisponibles", image=image, err=str(exc))
+            return []
+        return candidats(actuel, publies)
 
     # --- journalisation ------------------------------------------------
 
@@ -599,6 +709,11 @@ def _message_approbation(acteur: str, action: Optional[str]) -> str:
         return (f"✅ Approuvé par @{acteur} — reconstruction des images durcies "
                 f"déclenchée (rebuild-hardened-images.yml) ; les images corrigées "
                 f"seront republiées automatiquement.")
+    if action == _ACTION_MESURE_TAGS:
+        return (f"✅ Approuvé par @{acteur} — mesure des tags publiés lancée "
+                f"({_WORKFLOW_MESURE_IMAGES}). La pull request ne sera ouverte que "
+                f"si un tag fait baisser les CVE bloquantes ; sinon, le tableau "
+                f"des mesures sera publié ici et l'issue rouverte.")
     if action == _ACTION_PR_CONSTRUCTION:
         return (f"✅ Approuvé par @{acteur} — correctif en cours de construction "
                 f"(build lancé) ; la pull request sera ouverte automatiquement.")
@@ -622,7 +737,27 @@ def anomalie_branche(anomalie: Anomalie) -> str:
     return "main"
 
 
-def _section_proposition(proposition: Any) -> str:
+def _section_mesure(justification: str, cibles: list[_CibleMesure]) -> str:
+    lignes = []
+    for cible in cibles:
+        if est_retrogradation(cible.actuel, cible.propose):
+            ecarte = f"{cible.propose} — ⚠️ rétrogradation, écarté"
+        else:
+            ecarte = f"{cible.propose} — non repris (choisi sans mesure)"
+        a_mesurer = ", ".join(cible.candidats) or "aucun tag publié de la même ligne"
+        lignes.append(f"| `{cible.image}:{cible.actuel}` | {a_mesurer} | {ecarte} |")
+    return ("## Correction proposée par Mirador\n\n"
+            f"**Montée de tag d'image, mesurée** — {justification}\n\n"
+            "Mirador ne reprend pas le tag écrit par l'analyse. Sur `/approuver`, "
+            "il mesure les tags publiés ci-dessous avec les filtres de la barrière "
+            "du dépôt, et n'ouvre une pull request que si l'un d'eux fait "
+            "strictement baisser le nombre de CVE bloquantes. Sinon, le tableau des "
+            "mesures est publié ici.\n\n"
+            "| Image en place | Tags publiés à mesurer | Tag écrit par l'analyse |\n"
+            "|---|---|---|\n" + "\n".join(lignes) + "\n\n")
+
+
+def _section_proposition(proposition: Any, cibles: Optional[list[_CibleMesure]] = None) -> str:
     """Rend la proposition d'intervention en Markdown pour le corps de l'issue.
 
     L'humain voit ainsi ce que Mirador exécuterait sur /approuver — utile aussi
@@ -647,6 +782,10 @@ def _section_proposition(proposition: Any) -> str:
         return (f"## Correction proposée par Mirador\n\n"
                 f"**Reconstruction d'image(s) durcie(s)** — {proposition.justification}\n\n"
                 f"Images concernées : {images}\n\n")
+    if proposition.type == TypeCorrection.PULL_REQUEST and cibles:
+        # Le corps rédigé par le Correcteur n'est pas repris : écrit par
+        # raisonnement, il contredisait le diff (kubernetes-formation#216).
+        return _section_mesure(proposition.justification, cibles)
     if proposition.type == TypeCorrection.PULL_REQUEST:
         detail = ""
         if proposition.corps_pr:
@@ -659,7 +798,10 @@ def _section_proposition(proposition: Any) -> str:
             f"**Relance du workflow** — {proposition.justification}\n\n")
 
 
-def _corps_issue(anomalie: Anomalie, depot_nom: str, proposition: Any = None) -> str:
+def _corps_issue(
+    anomalie: Anomalie, depot_nom: str, proposition: Any = None,
+    cibles: Optional[list[_CibleMesure]] = None,
+) -> str:
     return (
         f"## Anomalie détectée\n\n"
         f"| Champ | Valeur |\n|-------|--------|\n"
@@ -668,7 +810,7 @@ def _corps_issue(anomalie: Anomalie, depot_nom: str, proposition: Any = None) ->
         f"| Niveau de risque | {anomalie.niveau_risque.name} |\n"
         f"| Run GitHub | #{anomalie.workflow_run_id} |\n\n"
         f"## Cause identifiée\n\n{anomalie.cause_identifiee or 'Non identifiée automatiquement.'}\n\n"
-        f"{_section_proposition(proposition)}"
+        f"{_section_proposition(proposition, cibles)}"
         f"Pour valider ou rejeter : `/approuver` ou `/rejeter <motif>`.\n\n"
         f"<!-- mirador:anomalie_id:{anomalie.correlation_id} -->\n"
     )

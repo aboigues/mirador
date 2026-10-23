@@ -6,9 +6,12 @@ pas d'anomalie, intervention auto (RELANCE / PR), escalade humaine, et le retour
 de validation (approuver / rejeter).
 """
 import io
+import json
 import zipfile
+from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pytest
 
 
@@ -207,7 +210,7 @@ class _WriterFake:
 
 
 def _traitement(actions, writer, correcteur, regles=None, deja_traite=None,
-                lire_proposition=None, lecture_depot=False):
+                lire_proposition=None, lecture_depot=False, registre=None):
     depot = _depot(regles_ids=[r.id for r in (regles or [])], lecture_depot=lecture_depot)
 
     def resoudre(nom_depot):
@@ -224,6 +227,7 @@ def _traitement(actions, writer, correcteur, regles=None, deja_traite=None,
         resoudre_depot=resoudre,
         deja_traite=deja_traite,
         lire_proposition=lire_proposition,
+        registre=registre,
     )
 
 
@@ -326,15 +330,20 @@ class TestContexteDepot:
             contenus={"tp08/compose.yaml": "image: postgres:18-alpine\n"},
         )
         writer = _WriterFake()
+        # Correctif sans changement de référence d'image : un bump de tag passe
+        # par la mesure des tags publiés (cf. TestTagsImageMesures).
         correcteur = _CorrecteurFake(PropositionCorrection(
-            type=TypeCorrection.PULL_REQUEST, justification="image stagnante",
+            type=TypeCorrection.PULL_REQUEST, justification="redémarrage manquant",
             titre_pr="fix: postgres", corps_pr="corps",
-            fichiers=[{"chemin": "tp08/compose.yaml", "contenu": "image: postgres:18\n"}],
+            fichiers=[{"chemin": "tp08/compose.yaml",
+                       "contenu": "image: postgres:18-alpine\nrestart: always\n"}],
         ))
         traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
         await traitement.traiter(_message_workflow())
         assert actions.appels_lister_fichiers == [(DEPOT, "main")]
-        assert actions.appels_lire_fichier == ["tp08/compose.yaml"]
+        # Lu deux fois : pour le contexte, puis avant la matérialisation, pour
+        # vérifier que le correctif ne change aucun tag d'image.
+        assert actions.appels_lire_fichier == ["tp08/compose.yaml", "tp08/compose.yaml"]
         assert "tp08/compose.yaml" in correcteur.dernier_contexte_depot
         assert "postgres:18-alpine" in correcteur.dernier_contexte_depot
         # Le correctif se matérialise ensuite normalement (chemin inchangé).
@@ -838,3 +847,141 @@ class TestValidationHumaine:
         await traitement.traiter(_message_validation(commande="rejeter", motif=motif))
         assert actions.fermetures[0]["label"] == "rejected"
         assert any(e.type_evenement == TypeEvenement.REJET for e in writer.evenements)
+
+
+FIXTURE_216 = Path(__file__).parent.parent / "fixtures" / "kubernetes-formation-216"
+FICHIERS_216 = [
+    "tp04/05-grafana-deployment.yaml",
+    "tp06/tekton/tasks/helm-deploy-task.yaml",
+    "tp10/20b-grafana-deployment.yaml",
+]
+# Extrait du corps réel de kubernetes-formation#216 : il recommande l'inverse
+# de ce que fait le diff (11.4.0 et 3.14.0).
+CORPS_PR_216 = (
+    "- Mettre à jour **alpine/helm** vers une version égale ou supérieure à 3.23.0\n"
+    "- Mettre à jour **grafana/grafana** vers une version égale ou supérieure à 13.2.2"
+)
+
+
+def _fichiers_216(etat: str) -> dict[str, str]:
+    return {c: (FIXTURE_216 / etat / c).read_text(encoding="utf-8") for c in FICHIERS_216}
+
+
+def _proposition_216() -> PropositionCorrection:
+    return PropositionCorrection(
+        type=TypeCorrection.PULL_REQUEST,
+        justification="CVE HIGH/CRITICAL sur alpine/helm:3.22.0 et grafana/grafana:13.2.1",
+        titre_pr="chore: bump versions d'images Docker pour résoudre vulnérabilités de sécurité CVE-2026",
+        corps_pr=CORPS_PR_216,
+        fichiers=[{"chemin": c, "contenu": t} for c, t in _fichiers_216("apres").items()],
+    )
+
+
+class _RegistreFake:
+    """Tags réellement publiés sur Docker Hub le 2026-10-23 (extrait)."""
+
+    TAGS = {
+        "grafana/grafana": ["13.2.4-ubuntu", "13.2.4", "13.2.3", "13.2.2", "13.2.1",
+                            "13.2.0", "12.4.0", "11.4.0"],
+        "alpine/helm": ["3.22", "3.22.1", "3.22.0", "3.21.4", "3.14.0", "3.13.2"],
+    }
+
+    def __init__(self):
+        self.appels: list = []
+
+    async def lister_tags(self, nom: str, contenant: str) -> list[str]:
+        self.appels.append((nom, contenant))
+        return [t for t in self.TAGS.get(nom, []) if contenant in t]
+
+
+class _RegistreEnPanne:
+    async def lister_tags(self, nom: str, contenant: str) -> list[str]:
+        raise httpx.HTTPStatusError(
+            "429", request=httpx.Request("GET", "https://hub.docker.com"),
+            response=httpx.Response(429),
+        )
+
+
+class TestTagsImageMesures:
+    """Régression kubernetes-formation#216 : le Correcteur inventait les tags.
+
+    Mirador y a rétrogradé grafana/grafana 13.2.1 → 11.4.0 et alpine/helm
+    3.22.0 → 3.14.0 (7 → 43 CVE bloquantes), sous un corps de PR qui
+    recommandait l'inverse. Un correctif qui change une référence d'image ne
+    pousse plus le tag de Claude : Mirador liste les tags publiés de la même
+    ligne (jamais en arrière) et délègue leur mesure à un workflow du dépôt
+    surveillé, qui n'ouvre la PR que si un tag fait baisser la barrière.
+    """
+
+    IMAGES_ATTENDUES = [
+        {"image": "grafana/grafana", "actuel": "13.2.1", "candidats": ["13.2.4"]},
+        {"image": "alpine/helm", "actuel": "3.22.0", "candidats": ["3.22.1"]},
+    ]
+
+    async def test_intervention_auto_ne_pousse_pas_le_tag_invente(self):
+        actions, writer = _ActionsFake(contenus=_fichiers_216("avant")), _WriterFake()
+        correcteur = _CorrecteurFake(_proposition_216())
+        traitement = _traitement(actions, writer, correcteur, registre=_RegistreFake())
+        await traitement.traiter(_message_workflow())  # branche feature → LOW → auto
+
+        assert actions.branches == [] and actions.fichiers == [] and actions.prs == []
+        assert len(actions.workflows) == 1
+        w = actions.workflows[0]
+        assert w["fichier"] == "mirador-mesure-images.yml"
+        assert w["ref"] == "main"
+        assert w["inputs"]["base_branch"] == "main"
+        assert w["inputs"]["head_branch"] == "mirador/fix-12345678"
+        assert w["inputs"]["issue"] == ""
+        assert json.loads(w["inputs"]["images"]) == self.IMAGES_ATTENDUES
+        assert "11.4.0" not in json.dumps(w) and "3.14.0" not in json.dumps(w)
+        intervention = next(e for e in writer.evenements
+                            if e.type_evenement == TypeEvenement.INTERVENTION)
+        assert intervention.type_action == "MESURE_TAGS_EN_COURS"
+
+    async def test_approuver_mesure_au_lieu_d_ouvrir_la_pr(self):
+        actions, writer = _ActionsFake(contenus=_fichiers_216("avant")), _WriterFake()
+        correcteur = _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+        details = {"proposition": _proposition_216().model_dump(),
+                   "workflow_run_id": 39931391901, "head_branch": "main"}
+        traitement = _traitement(actions, writer, correcteur, registre=_RegistreFake(),
+                                 lire_proposition=lambda _id: details)
+        await traitement.traiter(_message_validation(commande="approuver"))
+
+        assert actions.branches == [] and actions.fichiers == [] and actions.prs == []
+        w = actions.workflows[0]
+        assert w["inputs"]["head_branch"] == "mirador/fix-39931391901"
+        assert w["inputs"]["issue"] == "42"
+        assert json.loads(w["inputs"]["images"]) == self.IMAGES_ATTENDUES
+        assert "mesur" in actions.commentaires[0]["corps"].lower()
+        assert actions.fermetures[0]["label"] == "resolved"
+
+    async def test_issue_annonce_la_mesure_et_ecarte_le_corps_contradictoire(self):
+        # Cas kubernetes-formation#217 : sur /approuver, c'est la mesure qui
+        # choisira le tag. L'issue le dit, et ne reprend pas un corps de PR
+        # rédigé par raisonnement, qui peut contredire le diff.
+        actions, writer = _ActionsFake(contenus=_fichiers_216("avant")), _WriterFake()
+        correcteur = _CorrecteurFake(_proposition_216())
+        traitement = _traitement(actions, writer, correcteur, registre=_RegistreFake())
+        await traitement.traiter(_message_workflow(head_branch="main"))  # MEDIUM → escalade
+
+        corps = actions.issues_ouvertes[0]["corps"]
+        assert "grafana/grafana:13.2.1" in corps and "alpine/helm:3.22.0" in corps
+        assert "13.2.4" in corps and "3.22.1" in corps  # candidats à mesurer
+        assert "rétrograd" in corps.lower()
+        assert "3.23.0" not in corps
+        assert actions.workflows == [] and actions.prs == []
+
+    async def test_registre_indisponible_mesure_quand_meme_le_tag_en_place(self):
+        # Sans candidat, la mesure du tag en place suffit à documenter
+        # l'abstention dans l'Issue (aucun tag publié ne corrige).
+        actions, writer = _ActionsFake(contenus=_fichiers_216("avant")), _WriterFake()
+        correcteur = _CorrecteurFake(_proposition_216())
+        traitement = _traitement(actions, writer, correcteur, registre=_RegistreEnPanne())
+        await traitement.traiter(_message_workflow())
+
+        images = json.loads(actions.workflows[0]["inputs"]["images"])
+        assert images == [
+            {"image": "grafana/grafana", "actuel": "13.2.1", "candidats": []},
+            {"image": "alpine/helm", "actuel": "3.22.0", "candidats": []},
+        ]
+        assert actions.prs == []

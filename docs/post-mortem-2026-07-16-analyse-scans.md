@@ -98,7 +98,7 @@ que la séquence de greps qui l'a remplacée, et aurait donné la bonne réponse
 | Ne pas installer l'auto-fix dans les deux dépôts (conclusion inchangée, désormais étayée) | Fait |
 | Ne pas modifier les scans de `docker-formation` / `kubernetes-formation` — ils sont corrects | Fait |
 | Consigner la règle « grep pour localiser, lecture pour conclure » en mémoire de travail | Fait |
-| Attendre un échec réel avant d'envisager un auto-fix par registre (choix du tag cible) | En attente |
+| Attendre un échec réel avant d'envisager un auto-fix par registre (choix du tag cible) | Arrivé le 2026-10-23 (kubernetes-formation#216, tag inventé) ; traité par mirador#9 : tags listés sur le registre et mesurés |
 
 ## Question restée ouverte
 
