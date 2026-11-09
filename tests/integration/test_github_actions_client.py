@@ -295,3 +295,27 @@ class TestMessageCommitTete:
         respx.get(_url("/commits/mirador/fix-1")).mock(return_value=httpx.Response(500))
         with pytest.raises(httpx.HTTPStatusError):
             await client.message_commit_tete(DEPOT, "mirador/fix-1", INSTALLATION_ID)
+
+
+class TestCompterJobs:
+    """Nombre TOTAL de jobs lancés par un run (tous statuts confondus).
+
+    0 job = run mort-né : panne GitHub Actions ou fichier de workflow invalide.
+    """
+
+    @respx.mock
+    async def test_renvoie_total_count(self, client):
+        route = respx.get(_url(f"/actions/runs/{RUN_ID}/jobs")).mock(
+            return_value=httpx.Response(200, json={"total_count": 7, "jobs": [{"id": 1}]})
+        )
+        assert await client.compter_jobs(DEPOT, RUN_ID, INSTALLATION_ID) == 7
+        # Un seul job suffit à lire total_count : pas de pagination inutile.
+        assert route.calls.last.request.url.params["per_page"] == "1"
+        assert route.calls.last.request.url.params["filter"] == "all"
+
+    @respx.mock
+    async def test_run_mort_ne(self, client):
+        respx.get(_url(f"/actions/runs/{RUN_ID}/jobs")).mock(
+            return_value=httpx.Response(200, json={"total_count": 0, "jobs": []})
+        )
+        assert await client.compter_jobs(DEPOT, RUN_ID, INSTALLATION_ID) == 0

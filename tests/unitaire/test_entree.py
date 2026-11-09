@@ -159,3 +159,18 @@ class TestCablage:
 
 async def _coro(valeur):
     return valeur
+
+
+class TestCablageReel:
+    def test_la_sonde_d_etat_github_est_branchee(self, monkeypatch):
+        # Sans elle, les runs morts-nés d'une panne GitHub redeviennent des issues
+        # (docker-formation#50-52) : aucun test du traitement ne le verrait.
+        import src.gestionnaires.entree as entree
+        from src.infrastructure.github.statut import actions_degrade
+
+        monkeypatch.setattr(entree, "_client_bucket", lambda: object())
+        monkeypatch.setattr(entree, "_client_anthropic", lambda: object())
+        monkeypatch.setattr(entree, "_client_actions", lambda: object())
+
+        traitement = entree.construire_traitement_reel(ConfigDepots(charger_depots(json.dumps(_CONFIG))))
+        assert traitement._actions_degrade is actions_degrade

@@ -312,6 +312,20 @@ class GitHubActionsClient:
                  total=len(jobs), en_echec=len(en_echec))
         return en_echec
 
+    async def compter_jobs(self, depot: str, run_id: int, installation_id: int) -> int:
+        """Nombre total de jobs lancés par le run, tous statuts et tentatives.
+
+        0 = run mort-né (panne GitHub Actions ou workflow invalide). `per_page=1` :
+        seul `total_count` est lu, inutile de paginer.
+        """
+        reponse = await self._requete(
+            "GET",
+            f"/repos/{depot}/actions/runs/{run_id}/jobs",
+            installation_id,
+            params={"filter": "all", "per_page": 1},
+        )
+        return int(reponse.json().get("total_count", 0))
+
     async def telecharger_logs_job(
         self, depot: str, job_id: int, installation_id: int
     ) -> bytes:

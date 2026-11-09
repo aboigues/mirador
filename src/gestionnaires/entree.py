@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import structlog
 from fastapi import FastAPI
@@ -85,6 +85,7 @@ def construire_traitement(
     deja_traite: Optional[Callable[[str], bool]] = None,
     lire_proposition: Optional[Callable[[str], Optional[dict]]] = None,
     registre: Any = None,
+    actions_degrade: Optional[Callable[[], Awaitable[bool]]] = None,
 ) -> Traitement:
     """Assemble l'orchestrateur avec les I/O fournis et la config des dépôts."""
     return Traitement(
@@ -97,6 +98,7 @@ def construire_traitement(
         deja_traite=deja_traite,
         lire_proposition=lire_proposition,
         registre=registre,
+        actions_degrade=actions_degrade,
     )
 
 
@@ -130,6 +132,7 @@ def creer_app_webhook(config: Optional[ConfigDepots] = None) -> FastAPI:
 def construire_traitement_reel(config: Optional[ConfigDepots] = None) -> Traitement:
     """Câble l'orchestrateur avec les vrais clients (échoue vite si un secret manque)."""
     from src.agents.correcteur import Correcteur
+    from src.infrastructure.github.statut import actions_degrade
     from src.infrastructure.registre.docker_hub import ClientDockerHub
     from src.infrastructure.stockage.depots import DepotJournal
     from src.infrastructure.stockage.writer import WriterAudit
@@ -145,6 +148,7 @@ def construire_traitement_reel(config: Optional[ConfigDepots] = None) -> Traitem
         deja_traite=journal.delivery_deja_traite,
         lire_proposition=journal.proposition_escalade,
         registre=ClientDockerHub(),
+        actions_degrade=actions_degrade,
     )
 
 
