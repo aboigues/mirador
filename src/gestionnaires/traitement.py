@@ -13,12 +13,14 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 from uuid import UUID, uuid4
 
 import structlog
 
 from src.agents.correcteur import MAX_LOG_CHARS, PropositionCorrection, TypeCorrection
+# Même définition que le détecteur : un run « sain » n'est jamais une anomalie.
+from src.agents.detecteur import _CONCLUSIONS_SAINES
 from src.agents.superviseur import DecisionEscalade
 from src.domaine.anomalie import Anomalie
 from src.domaine.journal import EvenementJournal, TypeEvenement
@@ -109,6 +111,7 @@ class Traitement:
         deja_traite: Optional[Callable[[str], bool]] = None,
         lire_proposition: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
         registre: Any = None,
+        actions_degrade: Optional[Callable[[], Awaitable[bool]]] = None,
     ) -> None:
         self._detecteur = detecteur
         self._superviseur = superviseur
@@ -119,6 +122,9 @@ class Traitement:
         self._deja_traite = deja_traite
         self._lire_proposition = lire_proposition
         self._registre = registre
+        # Sonde « GitHub Actions est-il en panne ? » (githubstatus.com). Absente :
+        # aucun run n'est écarté comme mort-né, comportement historique.
+        self._actions_degrade = actions_degrade
         self._delivery_courant: Optional[str] = None
 
     async def traiter(self, message: dict[str, Any]) -> None:
@@ -156,6 +162,8 @@ class Traitement:
             # Un échec de la mesure, lui, suit le chemin normal d'analyse.
             await self._ouvrir_pull_request_mesuree(message, depot, depot_nom)
             return
+        if await self._run_mort_ne_pendant_une_panne(message, depot_nom, depot.installation_id):
+            return
 
         extrait_log, noms_jobs = await self._recuperer_extrait_log(
             depot_nom, message.get("workflow_run_id"), depot.installation_id
@@ -176,6 +184,37 @@ class Traitement:
             await self._intervenir(anomalie, depot, depot_nom, extrait_log, regles, noms_jobs)
         else:  # NOTIFIER_ET_ATTENDRE ou VALIDATION_HUMAINE_REQUISE
             await self._escalader(anomalie, depot, depot_nom, extrait_log, regles, noms_jobs=noms_jobs)
+
+    async def _run_mort_ne_pendant_une_panne(
+        self, message: dict[str, Any], depot_nom: str, installation_id: int
+    ) -> bool:
+        """Vrai si le run n'a lancé aucun job ET que GitHub Actions est en panne.
+
+        Pendant une panne, chaque run échoue au démarrage (0 job) : en faire une
+        anomalie ouvre une issue par run, sans rien à corriger dans le dépôt
+        (docker-formation#50-52, 2026-11-09). Mais 0 job est aussi le symptôme
+        d'un workflow invalide, qu'il faut signaler : seule la conjonction des
+        deux écarte le run. Toute incertitude (comptage ou statut indisponible)
+        laisse le run suivre le chemin normal : une issue de trop vaut mieux
+        qu'un échec réel masqué.
+        """
+        if self._actions_degrade is None:
+            return False
+        if (message.get("conclusion") or "").lower() in _CONCLUSIONS_SAINES:
+            return False  # aucun appel pour les runs réussis, de loin les plus nombreux
+        run_id = message.get("workflow_run_id")
+        try:
+            if await self._actions.compter_jobs(depot_nom, run_id, installation_id) != 0:
+                return False
+            if not await self._actions_degrade():
+                return False
+        except Exception as exc:
+            log.warning("traitement.mort_ne_indetermine",
+                        depot=depot_nom, run_id=run_id, err=str(exc))
+            return False
+        log.info("traitement.run_mort_ne_ignore", depot=depot_nom, run_id=run_id,
+                 workflow=message.get("workflow_nom"), raison="0 job, GitHub Actions dégradé")
+        return True
 
     async def _recuperer_extrait_log(
         self, depot_nom: str, run_id: Any, installation_id: int

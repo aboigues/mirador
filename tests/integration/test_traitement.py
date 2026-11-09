@@ -216,7 +216,8 @@ class _WriterFake:
 
 
 def _traitement(actions, writer, correcteur, regles=None, deja_traite=None,
-                lire_proposition=None, lecture_depot=False, registre=None):
+                lire_proposition=None, lecture_depot=False, registre=None,
+                actions_degrade=None):
     depot = _depot(regles_ids=[r.id for r in (regles or [])], lecture_depot=lecture_depot)
 
     def resoudre(nom_depot):
@@ -234,6 +235,7 @@ def _traitement(actions, writer, correcteur, regles=None, deja_traite=None,
         deja_traite=deja_traite,
         lire_proposition=lire_proposition,
         registre=registre,
+        actions_degrade=actions_degrade,
     )
 
 
@@ -1101,3 +1103,107 @@ class TestPullRequestApresMesure:
         traitement = _traitement(actions, writer, _CorrecteurFake(None))
         await traitement.traiter(_message_fin_mesure(chemin=".github/workflows/ci.yml"))
         assert actions.appels_commit_tete == [] and actions.prs == []
+
+
+class _ActionsJobsComptes(_ActionsFake):
+    """Client GitHub qui expose le nombre TOTAL de jobs lancés par le run."""
+
+    def __init__(self, total_jobs: int, logs: bytes = b"aucun pattern"):
+        super().__init__(logs=logs)
+        self._total = total_jobs
+        self.appels_compter_jobs: list = []
+        self.logs_telecharges = 0
+
+    async def compter_jobs(self, depot, run_id, installation_id) -> int:
+        self.appels_compter_jobs.append(run_id)
+        return self._total
+
+    async def telecharger_logs(self, depot, run_id, installation_id) -> bytes:
+        self.logs_telecharges += 1
+        return await super().telecharger_logs(depot, run_id, installation_id)
+
+
+def _etat_actions(degrade: bool):
+    appels: list = []
+
+    async def actions_degrade() -> bool:
+        appels.append(1)
+        return degrade
+
+    actions_degrade.appels = appels
+    return actions_degrade
+
+
+class TestRunsMortsNes:
+    """Un run terminé en échec sans avoir lancé un seul job, pendant une panne de
+    GitHub Actions, n'est pas une anomalie du dépôt (docker-formation#50-52,
+    incident « Actions and Checks API » du 2026-11-09 : 0 job, « workflow file
+    issue », trois issues ouvertes à tort).
+
+    Mais 0 job est AUSSI le symptôme d'un fichier de workflow invalide, qu'il faut
+    signaler. Seule la conjonction « 0 job ET Actions dégradé » fait ignorer le run.
+    """
+
+    def _correcteur(self):
+        return _CorrecteurFake(PropositionCorrection(type=TypeCorrection.RELANCE, justification="x"))
+
+    async def test_zero_job_pendant_une_panne_est_ignore(self):
+        actions, writer, correcteur = _ActionsJobsComptes(0), _WriterFake(), self._correcteur()
+        etat = _etat_actions(degrade=True)
+        traitement = _traitement(actions, writer, correcteur, actions_degrade=etat)
+        await traitement.traiter(_message_workflow(head_branch="main"))
+        assert actions.issues_ouvertes == [] and actions.relances == []
+        assert correcteur.appels == 0
+        assert actions.logs_telecharges == 0
+        assert writer.evenements == []
+
+    async def test_zero_job_hors_panne_reste_une_anomalie(self):
+        # Workflow invalide : le responsable doit en être prévenu.
+        actions, writer, correcteur = _ActionsJobsComptes(0), _WriterFake(), self._correcteur()
+        traitement = _traitement(actions, writer, correcteur, actions_degrade=_etat_actions(False))
+        await traitement.traiter(_message_workflow(head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
+
+    async def test_vrai_echec_pendant_une_panne_reste_une_anomalie(self):
+        # Une panne ne doit pas masquer un échec réel : des jobs ont tourné.
+        actions, writer, correcteur = _ActionsJobsComptes(3), _WriterFake(), self._correcteur()
+        etat = _etat_actions(degrade=True)
+        traitement = _traitement(actions, writer, correcteur, actions_degrade=etat)
+        await traitement.traiter(_message_workflow(head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
+        assert etat.appels == []  # statut GitHub consulté seulement pour 0 job
+
+    async def test_run_reussi_ne_coute_aucun_appel(self):
+        actions, writer, correcteur = _ActionsJobsComptes(0), _WriterFake(), self._correcteur()
+        etat = _etat_actions(degrade=True)
+        traitement = _traitement(actions, writer, correcteur, actions_degrade=etat)
+        await traitement.traiter(_message_workflow(conclusion="success"))
+        assert actions.appels_compter_jobs == [] and etat.appels == []
+
+    async def test_comptage_indisponible_suit_le_chemin_normal(self):
+        # Dans le doute, mieux vaut une issue de trop qu'un échec réel masqué.
+        actions, writer, correcteur = _ActionsJobsComptes(0), _WriterFake(), self._correcteur()
+
+        async def en_panne(depot, run_id, installation_id):
+            raise httpx.HTTPError("503")
+
+        actions.compter_jobs = en_panne
+        traitement = _traitement(actions, writer, correcteur, actions_degrade=_etat_actions(True))
+        await traitement.traiter(_message_workflow(head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
+
+    async def test_statut_github_indisponible_suit_le_chemin_normal(self):
+        actions, writer, correcteur = _ActionsJobsComptes(0), _WriterFake(), self._correcteur()
+
+        async def statut_en_panne() -> bool:
+            raise httpx.HTTPError("timeout")
+
+        traitement = _traitement(actions, writer, correcteur, actions_degrade=statut_en_panne)
+        await traitement.traiter(_message_workflow(head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
+
+    async def test_sans_sonde_de_statut_le_comportement_est_inchange(self):
+        actions, writer, correcteur = _ActionsJobsComptes(0), _WriterFake(), self._correcteur()
+        traitement = _traitement(actions, writer, correcteur)
+        await traitement.traiter(_message_workflow(head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
