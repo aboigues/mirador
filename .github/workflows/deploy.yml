@@ -70,3 +70,34 @@ jobs:
             echo "→ déploiement de $fn ($FN_ID)"
             bash infra/scaleway/update_code.sh "$FN_ID"
           done
+
+      # `function deploy` est ASYNCHRONE : sans cette attente, le job (et donc le
+      # verrou de concurrence deploy-scaleway) se libère alors que Scaleway
+      # construit encore. Un deploy-config lancé dans la foulée redéploie en plein
+      # build et les deux fonctions passent en « error » (2026-11-09, run
+      # 42679438820, 35 s après le déploiement de mirador#12). Attendre ici rend
+      # aussi visible un vrai échec de build, jusqu'ici annoncé « ✅ code déployé ».
+      - name: Attendre que les fonctions soient prêtes
+        run: |
+          set -euo pipefail
+          NS_ID=$(scw function namespace list project-id="$SCW_DEFAULT_PROJECT_ID" region="$SCW_DEFAULT_REGION" -o json \
+            | python3 -c "import sys,json;print(next(n['id'] for n in json.load(sys.stdin) if n['name']=='mirador'))")
+          # Laisser à Scaleway le temps de quitter « ready » : sans ce délai, un
+          # statut pas encore mis à jour passerait pour un déploiement terminé.
+          sleep 15
+          for tentative in $(seq 1 40); do
+            scw function function list namespace-id="$NS_ID" region="$SCW_DEFAULT_REGION" -o json > fonctions.json
+            python3 -c "import json,sys;sys.exit(any(f['status'] not in ('ready','error') for f in json.load(open('fonctions.json'))))" && break
+            sleep 15
+          done
+          python3 - <<'PY'
+          import json, sys
+          echec = False
+          for f in json.load(open("fonctions.json")):
+              print(f"{f['name']}: status={f['status']}")
+              if f["status"] != "ready":
+                  detail = f.get("error_message") or "aucun message"
+                  print(f"::error::{f['name']} n'est pas ready ({f['status']}) : {detail}")
+                  echec = True
+          sys.exit(echec)
+          PY

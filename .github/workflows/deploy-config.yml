@@ -205,7 +205,8 @@ jobs:
               print(f"   env    : {env}")
               print(f"   secrets: {sec}")
               if f["status"] != "ready":
-                  print(f"::error::{f['name']} n'est pas ready ({f['status']})"); echec = True
+                  detail = f.get("error_message") or "aucun message"
+                  print(f"::error::{f['name']} n'est pas ready ({f['status']}) : {detail}"); echec = True
               if sec != attendus:
                   print(f"::error::{f['name']} : secrets {sec} ≠ attendus {attendus}"); echec = True
           sys.exit(echec)
