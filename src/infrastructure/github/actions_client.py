@@ -354,6 +354,41 @@ class GitHubActionsClient:
         log.info("github.issue_ouverte", depot=depot, numero=donnees.get("number"))
         return donnees
 
+    async def lister_issues_ouvertes(
+        self, depot: str, installation_id: int, *, label: str
+    ) -> list[dict[str, Any]]:
+        """Issues ouvertes portant `label` : {number, title, body, labels}.
+
+        Une seule page de 100, les plus récentes d'abord : largement assez pour
+        retrouver l'issue Mirador d'un workflow (la déduplication en garde au plus
+        une ouverte par workflow). L'API Issues renvoie aussi les pull requests :
+        elles sont écartées.
+        """
+        reponse = await self._requete(
+            "GET", f"/repos/{depot}/issues", installation_id,
+            params={"state": "open", "labels": label, "per_page": 100},
+        )
+        return [
+            {
+                "number": issue["number"],
+                "title": issue.get("title") or "",
+                "body": issue.get("body") or "",
+                "labels": [l.get("name") for l in issue.get("labels", [])],
+            }
+            for issue in reponse.json()
+            if "pull_request" not in issue
+        ]
+
+    async def modifier_issue(
+        self, depot: str, installation_id: int, numero: int,
+        *, titre: str, corps: str, labels: list[str],
+    ) -> None:
+        await self._requete(
+            "PATCH", f"/repos/{depot}/issues/{numero}", installation_id,
+            json={"title": titre, "body": corps, "labels": labels},
+        )
+        log.info("github.issue_mise_a_jour", depot=depot, numero=numero)
+
     async def commenter_issue(
         self, depot: str, installation_id: int, numero: int, corps: str
     ) -> None:

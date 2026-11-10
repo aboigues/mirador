@@ -319,3 +319,43 @@ class TestCompterJobs:
             return_value=httpx.Response(200, json={"total_count": 0, "jobs": []})
         )
         assert await client.compter_jobs(DEPOT, RUN_ID, INSTALLATION_ID) == 0
+
+
+class TestIssuesOuvertes:
+    """Déduplication : retrouver l'issue Mirador ouverte d'un workflow en échec."""
+
+    @respx.mock
+    async def test_liste_les_issues_ouvertes_du_label_sans_les_pr(self, client):
+        route = respx.get(_url("/issues")).mock(return_value=httpx.Response(200, json=[
+            {"number": 12, "title": "[Mirador] Anomalie MEDIUM — Scan sur x", "body": "corps",
+             "labels": [{"name": "mirador"}, {"name": "medium"}]},
+            # L'API Issues renvoie aussi les pull requests : à écarter.
+            {"number": 13, "title": "PR", "body": "", "labels": [{"name": "mirador"}],
+             "pull_request": {"url": "https://api.github.com/x"}},
+        ]))
+        issues = await client.lister_issues_ouvertes(DEPOT, INSTALLATION_ID, label="mirador")
+        assert issues == [{"number": 12, "title": "[Mirador] Anomalie MEDIUM — Scan sur x",
+                           "body": "corps", "labels": ["mirador", "medium"]}]
+        params = route.calls.last.request.url.params
+        assert params["state"] == "open"
+        assert params["labels"] == "mirador"
+        assert params["per_page"] == "100"
+
+    @respx.mock
+    async def test_corps_absent_devient_chaine_vide(self, client):
+        respx.get(_url("/issues")).mock(return_value=httpx.Response(200, json=[
+            {"number": 12, "title": "t", "body": None, "labels": []},
+        ]))
+        issues = await client.lister_issues_ouvertes(DEPOT, INSTALLATION_ID, label="mirador")
+        assert issues[0]["body"] == ""
+
+    @respx.mock
+    async def test_modifier_issue_patch_titre_corps_labels(self, client):
+        route = respx.patch(_url("/issues/12")).mock(return_value=httpx.Response(200, json={}))
+        await client.modifier_issue(
+            DEPOT, INSTALLATION_ID, 12, titre="T", corps="C", labels=["mirador", "high"]
+        )
+        import json as _json
+        assert _json.loads(route.calls.last.request.content) == {
+            "title": "T", "body": "C", "labels": ["mirador", "high"]
+        }
