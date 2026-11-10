@@ -20,7 +20,7 @@ l'approbation reste dans GitHub.
 
 ## Contexte technique
 
-**Langage/Version** : Python 3.12 (identique au reste du dépôt)
+**Langage/Version** : Python 3.14 (identique au reste du dépôt ; 3.12 à l'origine)
 
 **Dépendances principales** :
 - `mcp 2.2.0` (nouvelle, extra optionnel `mcp`) : SDK officiel, `MCPServer`, transport stdio

@@ -12,6 +12,10 @@ on:
       - "src/**"
       - "handler.py"
       - "requirements.txt"
+      # La mécanique de déploiement elle-même (runtime, version de Python,
+      # wheels vendorées) : un changement doit s'appliquer et s'exercer au merge.
+      - ".github/workflows/deploy.yml"
+      - "infra/scaleway/update_code.sh"
   workflow_dispatch:
 
 concurrency:
@@ -19,7 +23,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SCW_VERSION: "2.56.3"
+  # ≥ 2.65 : première version qui connaît le runtime python314.
+  SCW_VERSION: "2.65.2"
   # Clé IAM de l'application `mirador-deploy` (Functions seulement), exposée sous
   # les noms qu'attend la CLI scw.
   SCW_ACCESS_KEY: ${{ secrets.SCW_DEPLOY_ACCESS_KEY }}
@@ -40,13 +45,16 @@ jobs:
     name: Mise à jour du code des fonctions
     runs-on: ubuntu-latest
     env:
-      PIP: pip # update_code.sh vendorise les wheels musllinux avec ce pip (python 3.12)
+      PIP: pip # update_code.sh vendorise les wheels musllinux avec ce pip
+      # Version du runtime Scaleway, des wheels vendorées et du Python du job :
+      # update_code.sh bascule le runtime des fonctions si elle change.
+      PYTHON_VERSION: "3.14"
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Installer la CLI scw
         run: |

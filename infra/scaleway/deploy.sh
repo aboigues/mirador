@@ -12,7 +12,9 @@ PROFILE="${SCW_PROFILE-telemach}"
 REGION="${SCALEWAY_REGION:-fr-par}"
 PROJECT_ID="${MIRADOR_PROJECT_ID:-4135267b-fd5a-4079-b716-8b24240deabd}"
 NAMESPACE="mirador"
-RUNTIME="python312"
+# Même version que update_code.sh (wheels vendorées) et deploy.yml.
+PYTHON_VERSION="${PYTHON_VERSION:-3.14}"
+RUNTIME="python${PYTHON_VERSION/./}"
 ICI="$(cd "$(dirname "$0")" && pwd)"
 SECRETS="${MIRADOR_SECRETS:-$HOME/.config/mirador/secrets.env}"  # hors dépôt (voir README § Variables)
 
