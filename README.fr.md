@@ -116,7 +116,7 @@ Testé à trois niveaux : logique des outils, protocole via le client du SDK (do
 
 ## Stack technique
 
-- **Runtime** : Python 3.12 — Scaleway Serverless Functions (scale-to-zero). Le runtime est **Alpine/musl** : les dépendances sont vendorisées en wheels `musllinux` dans le zip, car le déploiement bas-niveau ne construit pas `requirements.txt`.
+- **Runtime** : Python 3.14 — Scaleway Serverless Functions (scale-to-zero). Le runtime est **Alpine/musl** : les dépendances sont vendorisées en wheels `musllinux` dans le zip, car le déploiement bas-niveau ne construit pas `requirements.txt`.
 - **File de messages** : Scaleway MnQ (SQS-compatible, boto3) — `mirador-webhooks` + sa DLQ. File **standard**, pas FIFO : les triggers Scaleway `scw_sqs` ne consomment pas les files FIFO. L'idempotence repose donc sur une déduplication par `delivery_id`.
 - **Stockage** : SQLite en mode WAL, persisté dans un bucket Scaleway Object Storage (~€0,02/mois) — audit append-only garanti par un writer unique (`max-scale=1`, INSERT-only, checksum SHA-256).
 - **Auth GitHub** : GitHub App — JWT RS256, tokens d'installation à durée limitée (nécessite `PyJWT[crypto]`).
@@ -129,7 +129,7 @@ Testé à trois niveaux : logique des outils, protocole via le client du SDK (do
 ## Lancement local
 
 ```bash
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest tests/ -v
 ```

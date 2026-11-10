@@ -202,7 +202,8 @@ python infra/scaleway/purger_queues.py mirador-writes # autre paire
 - **Runtime = Alpine Linux / musl** (`EXT_SUFFIX = …-linux-musl.so`). Les wheels
   `manylinux`/glibc produisent un `.so` introuvable au runtime → il faut des
   **wheels `musllinux`**. `update_code.sh` les installe via
-  `pip install --platform musllinux_1_2_x86_64 --only-binary=:all: --abi cp312`.
+  `pip install --platform musllinux_1_2_x86_64 --only-binary=:all: --abi cp314`
+  (version portée par `PYTHON_VERSION`, à changer en même temps que le runtime).
 - **Le déploiement bas-niveau (upload zip) ne build pas `requirements.txt`** → les
   dépendances sont **vendorées** dans le zip (~20 Mo). `requirements.txt` est
   volontairement exclu du zip pour éviter tout rebuild côté Scaleway.
