@@ -6,6 +6,7 @@ le matching des règles (`pattern_log`). `extraire_texte_logs` dézippe d'abord.
 """
 import io
 import zipfile
+from pathlib import Path
 
 from src.infrastructure.github.actions_client import (
     assembler_contexte_depot,
@@ -221,7 +222,8 @@ def test_aucun_dossier_docker_hardened_dans_le_depot():
 
 def test_deduplique_les_images_durcies():
     chemins = ["docker/hardened/nginx/Dockerfile"]
-    texte = "Scan telemachlearning/nginx:1.29-alpine HIGH\nScan telemachlearning/nginx:1.29-alpine HIGH"
+    texte = ("Scan telemachlearning/nginx:1.29-alpine CVE-2026-1 HIGH\n"
+             "Scan telemachlearning/nginx:1.29-alpine CVE-2026-2 HIGH")
     assert extraire_images_durcies(texte, chemins) == ["nginx"]
 
 
@@ -234,3 +236,39 @@ def test_detecte_une_image_durcie_a_la_racine_hardened():
         "Scan telemachlearning/grafana:13.0.2 CVE-2026-1234 HIGH", chemins
     )
     assert images == ["grafana"]
+
+
+# --- reconstruction seulement pour des CVE, jamais pour une image introuvable --
+# docker-formation#54 (2026-11-10) : les jobs tp11 ont échoué parce que les
+# nouvelles images durcies n'étaient pas encore publiées (« not found »).
+# Les simples mentions de telemachlearning/cadvisor et /grafana dans le log
+# ont suffi à déclencher une reconstruction — qui ne pouvait rien réparer.
+
+_FIXTURES = Path(__file__).parent.parent / "fixtures"
+
+
+def test_echec_sans_cve_pas_de_reconstruction_cas_reel():
+    texte = (_FIXTURES / "run-42808129686-tp11-image-introuvable.txt").read_text()
+    chemins = ["hardened/grafana/Dockerfile", "hardened/cadvisor/Dockerfile"]
+    assert extraire_images_durcies(texte, chemins) == []
+
+
+def test_image_durcie_introuvable_exclue_meme_avec_des_cve_ailleurs():
+    chemins = ["hardened/grafana/Dockerfile", "hardened/cadvisor/Dockerfile"]
+    texte = (
+        "Scan telemachlearning/grafana:13.0.2 CVE-2026-1234 HIGH\n"
+        'Image telemachlearning/cadvisor:v0.60.6 Error failed to resolve reference '
+        '"docker.io/telemachlearning/cadvisor:v0.60.6": '
+        "docker.io/telemachlearning/cadvisor:v0.60.6: not found\n"
+    )
+    assert extraire_images_durcies(texte, chemins) == ["grafana"]
+
+
+def test_autres_formes_d_image_introuvable():
+    chemins = ["hardened/cadvisor/Dockerfile"]
+    for erreur in (
+        "manifest unknown: manifest unknown",
+        "pull access denied for telemachlearning/cadvisor, repository does not exist",
+    ):
+        texte = f"CVE-2026-1 ailleurs\nError telemachlearning/cadvisor:v0.60.6 {erreur}\n"
+        assert extraire_images_durcies(texte, chemins) == [], erreur

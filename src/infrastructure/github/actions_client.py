@@ -56,6 +56,19 @@ _PATTERN_REFERENCE_IMAGE = re.compile(r"\b((?:[\w][\w.-]*/)*[\w][\w.-]*):([\w][\
 # Plafond du nombre de références distinctes recherchées (borne les appels à
 # l'API Code Search, elle-même limitée à 10 req/min).
 _MAX_RECHERCHES_IMAGES = 5
+# Une reconstruction d'image durcie ne corrige que des CVE de paquets OS : sans
+# identifiant CVE dans les jobs en échec, l'échec a une autre cause.
+_PATTERN_CVE = re.compile(r"\bCVE-\d{4}-\d+\b")
+# Erreurs de tirage d'une image absente du registre : la reconstruire depuis la
+# branche par défaut ne publie pas un tag qui n'existe que sur une branche.
+_PATTERN_IMAGE_INTROUVABLE = re.compile(
+    r"not found|manifest unknown|pull access denied|failed to resolve reference"
+    r"|repository does not exist",
+    re.IGNORECASE,
+)
+# `namespace/nom` dans une ligne d'erreur, avec ou sans tag (« pull access
+# denied for telemachlearning/cadvisor, repository… » n'en porte pas).
+_PATTERN_NOM_IMAGE = re.compile(r"[\w.-]+/([\w.-]+?)(?=[:,@\s\"']|$)")
 
 
 def _fenetre_utile(texte: str, taille: int) -> str:
@@ -178,7 +191,21 @@ def extraire_images_durcies(extrait_log: str, chemins_depot: list[str]) -> list[
     Deux conventions de rangement observées selon le dépôt : `docker/hardened/
     <nom>/...` (kubernetes-formation) ou `hardened/<nom>/...` à la racine
     (docker-formation) — les deux sont reconnues.
+
+    Une simple MENTION de l'image ne suffit pas (docker-formation#54, 2026-11-10 :
+    les jobs tp11 échouaient sur « not found », les images n'étant pas encore
+    publiées, et Mirador a reconstruit pour rien) :
+    - sans identifiant CVE dans le texte, aucune reconstruction ;
+    - une image citée dans une erreur « introuvable » est exclue.
     """
+    if not _PATTERN_CVE.search(extrait_log):
+        return []
+    introuvables = {
+        nom
+        for ligne in extrait_log.splitlines()
+        if _PATTERN_IMAGE_INTROUVABLE.search(ligne)
+        for nom in _PATTERN_NOM_IMAGE.findall(ligne)
+    }
     dossiers_durcis: set[str] = set()
     for chemin in chemins_depot:
         segments = chemin.split("/")
@@ -189,7 +216,7 @@ def extraire_images_durcies(extrait_log: str, chemins_depot: list[str]) -> list[
     trouvees: dict[str, None] = {}
     for reference in _toutes_references_images(extrait_log):
         nom_image = reference.split(":")[0].rsplit("/", 1)[-1]
-        if nom_image in dossiers_durcis:
+        if nom_image in dossiers_durcis and nom_image not in introuvables:
             trouvees.setdefault(nom_image, None)
     return list(trouvees)
 

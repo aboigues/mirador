@@ -134,6 +134,7 @@ class Traitement:
         self._actions_degrade = actions_degrade
         self._delivery_courant: Optional[str] = None
         self._workflow_chemin_courant: str = ""
+        self._head_branch_courante: str = ""
 
     async def traiter(self, message: dict[str, Any]) -> None:
         delivery_id = message.get("delivery_id")
@@ -164,6 +165,7 @@ class Traitement:
         if not depot.actif:
             return
         self._workflow_chemin_courant = message.get("workflow_chemin") or ""
+        self._head_branch_courante = message.get("head_branch") or ""
         if (
             message.get("workflow_chemin") == _CHEMIN_WORKFLOW_MESURE
             and message.get("conclusion") == "success"
@@ -363,7 +365,14 @@ class Traitement:
             return None, []
 
         texte_reperage = extrait_log + "\n" + "\n".join(noms_jobs)
-        images_durcies = extraire_images_durcies(texte_reperage, [f["path"] for f in arbre])
+        # La reconstruction publie depuis la branche par défaut : elle ne répare
+        # qu'un échec survenu SUR cette branche. Ailleurs (branche de PR), elle
+        # republiait les images de main sans rien corriger (docker-formation#54,
+        # 2026-11-10) — et publier depuis une branche non relue est exclu.
+        images_durcies = (
+            extraire_images_durcies(texte_reperage, [f["path"] for f in arbre])
+            if self._head_branch_courante == branche else []
+        )
         if images_durcies:
             # Court-circuite la collecte de contexte (Code Search + lectures) :
             # inutile de la payer, la décision est déjà prise (REBUILD_IMAGES).
