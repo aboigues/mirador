@@ -1,0 +1,187 @@
+2026-11-10T11:31:27.3552351Z Current runner version: '2.338.2'
+2026-11-10T11:31:27.3581444Z ##[group]Runner Image Provisioner
+2026-11-10T11:31:27.3582342Z Hosted Compute Agent
+2026-11-10T11:31:27.3583106Z Version: 20261028.624
+2026-11-10T11:31:27.3583815Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-10T11:31:27.3584612Z Build Date: 2026-10-28T21:51:42Z
+2026-11-10T11:31:27.3585344Z Worker ID: {e9f06bf8-64b5-4ef7-9bf4-4745796a8c58}
+2026-11-10T11:31:27.3586085Z Region: northcentralus
+2026-11-10T11:31:27.3586748Z Cloud: Azure
+2026-11-10T11:31:27.3587359Z ##[endgroup]
+2026-11-10T11:31:27.3588908Z ##[group]Operating System
+2026-11-10T11:31:27.3589666Z Ubuntu
+2026-11-10T11:31:27.3590230Z 26.04.1
+2026-11-10T11:31:27.3590867Z LTS
+2026-11-10T11:31:27.3591461Z ##[endgroup]
+2026-11-10T11:31:27.3592031Z ##[group]Runner Image
+2026-11-10T11:31:27.3592783Z Image: ubuntu-26.04
+2026-11-10T11:31:27.3593405Z Version: 20261101.186.1
+2026-11-10T11:31:27.3594809Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261101.186/images/ubuntu/Ubuntu2604-Readme.md
+2026-11-10T11:31:27.3596348Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261101.186
+2026-11-10T11:31:27.3597424Z ##[endgroup]
+2026-11-10T11:31:27.3600880Z Contents: read
+2026-11-10T11:31:27.3601492Z Metadata: read
+2026-11-10T11:31:27.3602155Z Packages: read
+2026-11-10T11:31:27.3602759Z ##[endgroup]
+2026-11-10T11:31:27.3604952Z Secret source: Actions
+2026-11-10T11:31:27.3606062Z Cache mode: write
+2026-11-10T11:31:27.3606774Z Prepare workflow directory
+2026-11-10T11:31:27.3959741Z Prepare all required actions
+2026-11-10T11:31:27.4011049Z Getting action download info
+2026-11-10T11:31:27.5988602Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-10T11:31:27.7101352Z Download action repository 'aquasecurity/setup-trivy@v0.3.1' (SHA:81e514348e19b6112ce2a7e3ecbafe19c1e1f567)
+2026-11-10T11:31:27.9849662Z Getting action download info
+2026-11-10T11:31:28.0759894Z Download action repository 'actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb' (SHA:9255dc7a253b0ccc959486e2bca901246202afeb)
+2026-11-10T11:31:28.2266738Z Download action repository 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' (SHA:8e8c483db84b4bee98b60c0593521ed34d9990e8)
+2026-11-10T11:31:28.3397180Z Complete job name: tp11-observabilite
+2026-11-10T11:31:28.4427999Z ##[group]Run actions/checkout@v4
+2026-11-10T11:31:28.4429334Z with:
+2026-11-10T11:31:28.4430129Z   repository: aboigues/docker-formation
+2026-11-10T11:31:28.4441145Z   ssh-strict: true
+2026-11-10T11:31:28.4441909Z   ssh-user: git
+2026-11-10T11:31:28.4442685Z   persist-credentials: true
+2026-11-10T11:31:28.4443554Z   clean: true
+2026-11-10T11:31:28.4444327Z   sparse-checkout-cone-mode: true
+2026-11-10T11:31:28.4445288Z   fetch-depth: 1
+2026-11-10T11:31:28.4446050Z   fetch-tags: false
+2026-11-10T11:31:28.4446830Z   show-progress: true
+2026-11-10T11:31:28.4447657Z   lfs: false
+2026-11-10T11:31:28.4448491Z   submodules: false
+2026-11-10T11:31:28.4449283Z   set-safe-directory: true
+2026-11-10T11:31:28.4450186Z   allow-unsafe-pr-checkout: false
+2026-11-10T11:31:28.4451344Z ##[endgroup]
+2026-11-10T11:31:28.6746024Z Syncing repository: aboigues/docker-formation
+2026-11-10T11:31:28.6749977Z ##[group]Getting Git version info
+2026-11-10T11:31:28.6752327Z Working directory is '/home/runner/work/docker-formation/docker-formation'
+2026-11-10T11:31:28.6754415Z [command]/usr/bin/git version
+2026-11-10T11:31:28.6784037Z git version 2.56.0
+2026-11-10T11:31:28.6806317Z ##[endgroup]
+2026-11-10T11:31:28.6823872Z Temporarily overriding HOME='/home/runner/work/_temp/2a613581-5145-4d09-9b4e-24918a84e0c9' before making global git config changes
+2026-11-10T11:31:28.6829311Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-10T11:31:28.6833891Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/docker-formation/docker-formation
+2026-11-10T11:31:28.6891420Z Deleting the contents of '/home/runner/work/docker-formation/docker-formation'
+2026-11-10T11:31:28.7014344Z ##[group]Initializing the repository
+2026-11-10T11:31:28.7018762Z [command]/usr/bin/git init /home/runner/work/docker-formation/docker-formation
+2026-11-10T11:31:28.7022592Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-10T11:31:28.7026890Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-10T11:31:28.7031309Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-10T11:31:28.7034490Z hint: call:
+2026-11-10T11:31:28.7036375Z hint:
+2026-11-10T11:31:28.7038707Z hint: 	git config --global init.defaultBranch <name>
+2026-11-10T11:31:28.7041378Z hint:
+2026-11-10T11:31:28.7044189Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-10T11:31:28.7048302Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-10T11:31:28.7051718Z hint:
+2026-11-10T11:31:28.7053735Z hint: 	git branch -m <name>
+2026-11-10T11:31:28.7056012Z hint:
+2026-11-10T11:31:28.7058958Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-10T11:31:28.7063791Z Initialized empty Git repository in /home/runner/work/docker-formation/docker-formation/.git/
+2026-11-10T11:31:28.7071464Z [command]/usr/bin/git remote add origin https://github.com/aboigues/docker-formation
+2026-11-10T11:31:28.7090695Z ##[endgroup]
+2026-11-10T11:31:28.7093799Z ##[group]Disabling automatic garbage collection
+2026-11-10T11:31:28.7096371Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-10T11:31:28.7146474Z ##[endgroup]
+2026-11-10T11:31:28.7148947Z ##[group]Setting up auth
+2026-11-10T11:31:28.7160500Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-10T11:31:28.7185926Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-10T11:31:28.7996007Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-10T11:31:28.8039344Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-10T11:31:28.8391750Z ##[endgroup]
+2026-11-10T11:31:28.8393895Z ##[group]Fetching the repository
+2026-11-10T11:31:28.8404296Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +7b1bb12aab76fce863b21475ad7ece13cdafd6bb:refs/remotes/pull/54/merge
+2026-11-10T11:31:29.1854498Z From https://github.com/aboigues/docker-formation
+2026-11-10T11:31:29.1856002Z  * [new ref]         7b1bb12aab76fce863b21475ad7ece13cdafd6bb -> pull/54/merge
+2026-11-10T11:31:29.1869359Z ##[endgroup]
+2026-11-10T11:31:29.1878663Z ##[group]Determining the checkout info
+2026-11-10T11:31:29.1880069Z ##[endgroup]
+2026-11-10T11:31:29.1881034Z [command]/usr/bin/git sparse-checkout disable
+2026-11-10T11:31:29.1931275Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-10T11:31:29.1965447Z ##[group]Checking out the ref
+2026-11-10T11:31:29.1969743Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/54/merge
+2026-11-10T11:31:29.2145895Z Note: switching to 'refs/remotes/pull/54/merge'.
+2026-11-10T11:31:29.2146627Z 
+2026-11-10T11:31:29.2147342Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-10T11:31:29.2149868Z changes and commit them, and you can discard any commits you make in this
+2026-11-10T11:31:29.2151733Z state without impacting any branches by switching back to a branch.
+2026-11-10T11:31:29.2152683Z 
+2026-11-10T11:31:29.2153299Z If you want to create a new branch to retain commits you create, you may
+2026-11-10T11:31:29.2154667Z do so (now or later) by using -c with the switch command. Example:
+2026-11-10T11:31:29.2155574Z 
+2026-11-10T11:31:29.2156142Z   git switch -c <new-branch-name>
+2026-11-10T11:31:29.2156889Z 
+2026-11-10T11:31:29.2157491Z Or undo this operation with:
+2026-11-10T11:31:29.2158353Z 
+2026-11-10T11:31:29.2158933Z   git switch -
+2026-11-10T11:31:29.2159512Z 
+2026-11-10T11:31:29.2160331Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-10T11:31:29.2161268Z 
+2026-11-10T11:31:29.2162397Z HEAD is now at 7b1bb12 Merge 4e57d14e57f153416adcbc7607b9340e2b01e765 into c7d28024615106e57a6a836751d73d8ba224dd09
+2026-11-10T11:31:29.2165814Z ##[endgroup]
+2026-11-10T11:31:29.2209020Z [command]/usr/bin/git log -1 --format=%H
+2026-11-10T11:31:29.2238342Z 7b1bb12aab76fce863b21475ad7ece13cdafd6bb
+2026-11-10T11:31:29.2511674Z ##[group]Run docker version
+2026-11-10T11:31:29.2512555Z docker version
+2026-11-10T11:31:29.2513284Z docker compose version
+2026-11-10T11:31:29.2577056Z shell: /usr/bin/bash -e {0}
+2026-11-10T11:31:29.2578118Z ##[endgroup]
+2026-11-10T11:31:29.3489866Z Client: Docker Engine - Community
+2026-11-10T11:31:29.3491323Z  Version:           29.4.2
+2026-11-10T11:31:29.3492483Z  API version:       1.54
+2026-11-10T11:31:29.3493589Z  Go version:        go1.26.2
+2026-11-10T11:31:29.3494764Z  Git commit:        055a478
+2026-11-10T11:31:29.3495903Z  Built:             Fri May  1 10:24:04 2026
+2026-11-10T11:31:29.3497077Z  OS/Arch:           linux/amd64
+2026-11-10T11:31:29.3498353Z  Context:           default
+2026-11-10T11:31:29.3498877Z 
+2026-11-10T11:31:29.3499475Z Server: Docker Engine - Community
+2026-11-10T11:31:29.3500680Z  Engine:
+2026-11-10T11:31:29.3501677Z   Version:          29.4.2
+2026-11-10T11:31:29.3502844Z   API version:      1.54 (minimum version 1.40)
+2026-11-10T11:31:29.3504146Z   Go version:       go1.26.2
+2026-11-10T11:31:29.3505261Z   Git commit:       d329809
+2026-11-10T11:31:29.3506407Z   Built:            Fri May  1 10:24:04 2026
+2026-11-10T11:31:29.3507907Z   OS/Arch:          linux/amd64
+2026-11-10T11:31:29.3509116Z   Experimental:     false
+2026-11-10T11:31:29.3510250Z  containerd:
+2026-11-10T11:31:29.3511267Z   Version:          v2.4.2
+2026-11-10T11:31:29.3512525Z   GitCommit:        b7a25261e029d68978bbf290df0a62fc819b3c51
+2026-11-10T11:31:29.3513843Z  runc:
+2026-11-10T11:31:29.3514871Z   Version:          1.5.2
+2026-11-10T11:31:29.3515843Z   GitCommit:        v1.5.2-0-g29dd3dc2
+2026-11-10T11:31:29.3516838Z  docker-init:
+2026-11-10T11:31:29.3517884Z   Version:          0.19.0
+2026-11-10T11:31:29.3518796Z   GitCommit:        de40ad0
+2026-11-10T11:31:29.4478339Z Docker Compose version v5.1.3
+2026-11-10T11:31:29.4639705Z ##[group]Run chmod +x scripts/lib.sh "tp11-observabilite/verify.sh"
+2026-11-10T11:31:29.4640884Z chmod +x scripts/lib.sh "tp11-observabilite/verify.sh"
+2026-11-10T11:31:29.4701831Z shell: /usr/bin/bash -e {0}
+2026-11-10T11:31:29.4702557Z ##[endgroup]
+2026-11-10T11:31:29.4891839Z ##[group]Run ./verify.sh solution
+2026-11-10T11:31:29.4892988Z ./verify.sh solution
+2026-11-10T11:31:29.4959766Z shell: /usr/bin/bash -e {0}
+2026-11-10T11:31:29.4960466Z ##[endgroup]
+2026-11-10T11:31:29.5973897Z ▶ 1) Démarrage de la stack d'observabilité (6 services)
+2026-11-10T11:31:29.6596721Z  Image prom/prometheus:v3.16.0 Pulling 
+2026-11-10T11:31:29.6599451Z  Image grafana/alloy:v1.21.3 Pulling 
+2026-11-10T11:31:29.6600730Z  Image grafana/loki:3.7.9 Pulling 
+2026-11-10T11:31:29.6604934Z  Image telemachlearning/grafana:13.3.0 Pulling 
+2026-11-10T11:31:29.6606964Z  Image telemachlearning/cadvisor:v0.60.6 Pulling 
+2026-11-10T11:31:29.8367865Z  Image telemachlearning/cadvisor:v0.60.6 Error failed to resolve reference "docker.io/telemachlearning/cadvisor:v0.60.6": docker.io/telemachlearning/cadvisor:v0.60.6: not found
+2026-11-10T11:31:29.8370827Z  Image telemachlearning/grafana:13.3.0 Interrupted 
+2026-11-10T11:31:29.8372210Z  Image grafana/loki:3.7.9 Interrupted 
+2026-11-10T11:31:29.8373614Z  Image grafana/alloy:v1.21.3 Interrupted 
+2026-11-10T11:31:29.8374921Z  Image prom/prometheus:v3.16.0 Interrupted 
+2026-11-10T11:31:29.8377151Z Error response from daemon: failed to resolve reference "docker.io/telemachlearning/cadvisor:v0.60.6": docker.io/telemachlearning/cadvisor:v0.60.6: not found
+2026-11-10T11:31:29.9087274Z ##[error]Process completed with exit code 1.
+2026-11-10T11:31:29.9289338Z Post job cleanup.
+2026-11-10T11:31:30.0204103Z [command]/usr/bin/git version
+2026-11-10T11:31:30.0253015Z git version 2.56.0
+2026-11-10T11:31:30.0297240Z Temporarily overriding HOME='/home/runner/work/_temp/edbf64ee-db0b-4a04-afee-01f4dc498c7a' before making global git config changes
+2026-11-10T11:31:30.0300020Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-10T11:31:30.0303637Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/docker-formation/docker-formation
+2026-11-10T11:31:30.0356926Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-10T11:31:30.0400820Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-10T11:31:30.1220658Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-10T11:31:30.1261674Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-10T11:31:30.1734387Z Cleaning up orphan processes
+2026-11-10T11:31:30.2215548Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

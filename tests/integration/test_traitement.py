@@ -471,18 +471,38 @@ class TestReconstructionImagesDurcies:
         assert "reconstruction" in actions.commentaires[0]["corps"].lower()
         assert actions.fermetures[0]["label"] == "resolved"
 
-    async def test_intervention_auto_low_declenche_directement_le_rebuild(self):
-        # Échec sur branche feature sans règle connue → LOW → intervention auto.
+    async def test_echec_sur_une_branche_ne_reconstruit_pas(self):
+        # Échec sur branche feature → LOW → intervention auto. La reconstruction
+        # se lançait alors SUR MAIN avec publication : elle republiait les images
+        # de main sans rien réparer sur la branche (docker-formation#54,
+        # 2026-11-10). Publier depuis une branche non relue n'est pas une option.
+        # Hors branche par défaut : chemin normal (correcteur), pas de rebuild.
         actions = self._actions_image_durcie()
         writer = _WriterFake()
         correcteur = _CorrecteurFake(
             PropositionCorrection(type=TypeCorrection.ABSTENTION, justification="x")
         )
         traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
-        await traitement.traiter(_message_workflow())
-        assert len(actions.workflows) == 1
-        assert actions.workflows[0]["fichier"] == "rebuild-hardened-images.yml"
-        assert actions.relances == [] and actions.prs == []
+        await traitement.traiter(_message_workflow())  # head_branch="feature/x"
+        assert actions.workflows == []
+        assert correcteur.appels == 1
+
+    async def test_image_introuvable_ne_declenche_pas_de_rebuild_cas_reel(self):
+        # docker-formation#54 (2026-11-10), log réel du job tp11 : les images
+        # durcies n'étaient pas encore publiées. Aucune CVE : rien à reconstruire.
+        texte = (Path(__file__).parent.parent / "fixtures"
+                 / "run-42808129686-tp11-image-introuvable.txt").read_text()
+        actions = _ActionsAvecJobs([(1, "tp11-observabilite", "failure", texte)])
+        actions._arbre = [{"path": "hardened/grafana/Dockerfile", "size": 300},
+                          {"path": "hardened/cadvisor/Dockerfile", "size": 300}]
+        writer = _WriterFake()
+        correcteur = _CorrecteurFake(
+            PropositionCorrection(type=TypeCorrection.ABSTENTION, justification="x")
+        )
+        traitement = _traitement(actions, writer, correcteur, lecture_depot=True)
+        await traitement.traiter(_message_workflow(conclusion="failure", head_branch="main"))
+        assert actions.workflows == []
+        assert correcteur.appels == 1
 
     async def test_image_durcie_detectee_meme_hors_du_budget_de_log(self):
         # kubernetes-formation#155 (2026-09-14) : 13 jobs en échec, dont
