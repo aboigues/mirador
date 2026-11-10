@@ -62,6 +62,7 @@ def _message_workflow(*, conclusion="failure", head_branch="feature/x") -> dict:
         "depot": DEPOT,
         "workflow_run_id": 12345678,
         "workflow_nom": "CI",
+        "workflow_chemin": ".github/workflows/ci.yml",
         "conclusion": conclusion,
         "head_branch": head_branch,
         "run_started_at": "2026-07-10T10:00:00Z",
@@ -126,6 +127,8 @@ class _ActionsFake:
         self.appels_chercher_code: list = []
         self.commits: dict = {}  # branche → message du commit de tête
         self.appels_commit_tete: list = []
+        self.issues_existantes: list = []  # issues ouvertes vues par lister_issues_ouvertes
+        self.modifications: list = []
 
     async def message_commit_tete(self, depot, branche, installation_id):
         self.appels_commit_tete.append(branche)
@@ -171,6 +174,12 @@ class _ActionsFake:
 
     async def commenter_issue(self, depot, installation_id, numero, corps) -> None:
         self.commentaires.append({"numero": numero, "corps": corps})
+
+    async def lister_issues_ouvertes(self, depot, installation_id, *, label) -> list[dict]:
+        return [i for i in self.issues_existantes if label in i["labels"]]
+
+    async def modifier_issue(self, depot, installation_id, numero, *, titre, corps, labels) -> None:
+        self.modifications.append({"numero": numero, "titre": titre, "corps": corps, "labels": labels})
 
     async def fermer_issue(self, depot, installation_id, numero, *, label=None) -> None:
         self.fermetures.append({"numero": numero, "label": label})
@@ -1206,4 +1215,123 @@ class TestRunsMortsNes:
         actions, writer, correcteur = _ActionsJobsComptes(0), _WriterFake(), self._correcteur()
         traitement = _traitement(actions, writer, correcteur)
         await traitement.traiter(_message_workflow(head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
+
+
+def _issue_existante(numero=17, *, corps=None, titre=None, labels=None) -> dict:
+    return {
+        "number": numero,
+        "title": titre or f"[Mirador] Anomalie MEDIUM — CI sur {DEPOT}",
+        "body": corps if corps is not None else (
+            "ancienne analyse\n<!-- mirador:anomalie_id:00000000-0000-0000-0000-000000000000 -->\n"
+            "<!-- mirador:workflow:.github/workflows/ci.yml -->\n"),
+        "labels": labels or ["mirador", "medium"],
+    }
+
+
+class _ActionsListeEnPanne(_ActionsFake):
+    async def lister_issues_ouvertes(self, depot, installation_id, *, label) -> list[dict]:
+        raise httpx.HTTPStatusError("502", request=httpx.Request("GET", "x"),
+                                    response=httpx.Response(502))
+
+
+class TestDeduplicationIssues:
+    """Un échec récurrent met à jour l'issue Mirador ouverte du même workflow au
+    lieu d'en ouvrir une nouvelle à chaque run (33 doublons mesurés au
+    2026-11-10 sur kubernetes-formation et docker-formation).
+
+    Choix : réanalyser et METTRE À JOUR la description. /approuver exécute la
+    proposition dont l'anomalie_id est dans la description (webhook.py) : la
+    garder sur l'ancienne analyse exécuterait une proposition périmée.
+    """
+
+    @staticmethod
+    def _correcteur():
+        return _CorrecteurFake(PropositionCorrection(
+            type=TypeCorrection.RELANCE, justification="nouvelle analyse"))
+
+    async def test_sans_issue_ouverte_ouvre_une_issue_marquee_du_workflow(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        await _traitement(actions, writer, self._correcteur()).traiter(
+            _message_workflow(conclusion="timed_out", head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
+        assert "<!-- mirador:workflow:.github/workflows/ci.yml -->" in actions.issues_ouvertes[0]["corps"]
+        assert actions.modifications == []
+
+    async def test_issue_ouverte_du_meme_workflow_est_mise_a_jour(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.issues_existantes = [_issue_existante(17)]
+        correcteur = self._correcteur()
+        await _traitement(actions, writer, correcteur).traiter(
+            _message_workflow(conclusion="timed_out", head_branch="main"))
+
+        assert actions.issues_ouvertes == []
+        assert correcteur.appels == 1  # réanalysée : la cause a pu changer
+        [modif] = actions.modifications
+        assert modif["numero"] == 17
+        assert "nouvelle analyse" in modif["corps"]
+        assert "ancienne analyse" not in modif["corps"]
+        # /approuver exécutera la NOUVELLE proposition, persistée sous ce correlation_id.
+        esc = next(e for e in writer.evenements if e.type_evenement == TypeEvenement.ESCALADE)
+        assert f"mirador:anomalie_id:{esc.correlation_id}" in modif["corps"]
+        assert "00000000-0000-0000-0000-000000000000" not in modif["corps"]
+        assert "<!-- mirador:workflow:.github/workflows/ci.yml -->" in modif["corps"]
+        assert esc.details["issue"] == 17
+
+    async def test_l_occurrence_est_consignee_en_commentaire(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.issues_existantes = [_issue_existante(17)]
+        await _traitement(actions, writer, self._correcteur()).traiter(
+            _message_workflow(conclusion="timed_out", head_branch="main"))
+        [commentaire] = actions.commentaires
+        assert commentaire["numero"] == 17
+        assert "12345678" in commentaire["corps"]  # le run de la nouvelle occurrence
+
+    async def test_titre_et_label_de_risque_suivent_les_labels_humains_restent(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.issues_existantes = [_issue_existante(
+            17, titre=f"[Mirador] Anomalie LOW — CI sur {DEPOT}",
+            labels=["mirador", "low", "a-trier"])]
+        await _traitement(actions, writer, self._correcteur()).traiter(
+            _message_workflow(conclusion="timed_out", head_branch="main"))
+        [modif] = actions.modifications
+        niveau = next(e for e in writer.evenements
+                      if e.type_evenement == TypeEvenement.ESCALADE).niveau_risque
+        assert modif["titre"] == f"[Mirador] Anomalie {niveau} — CI sur {DEPOT}"
+        assert sorted(modif["labels"]) == sorted(["mirador", niveau.lower(), "a-trier"])
+
+    async def test_issue_d_avant_le_marqueur_retrouvee_par_son_titre(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.issues_existantes = [_issue_existante(
+            9, corps="<!-- mirador:anomalie_id:00000000-0000-0000-0000-000000000000 -->")]
+        await _traitement(actions, writer, self._correcteur()).traiter(
+            _message_workflow(conclusion="timed_out", head_branch="main"))
+        assert actions.issues_ouvertes == []
+        assert [m["numero"] for m in actions.modifications] == [9]
+
+    async def test_issue_d_un_autre_workflow_ignoree(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.issues_existantes = [
+            _issue_existante(17, titre=f"[Mirador] Anomalie MEDIUM — Release sur {DEPOT}",
+                             corps="<!-- mirador:workflow:.github/workflows/release.yml -->"),
+            # Même NOM affiché, mais un autre fichier : le marqueur prime sur le titre.
+            _issue_existante(18, corps="<!-- mirador:workflow:.github/workflows/ci-nuit.yml -->"),
+        ]
+        await _traitement(actions, writer, self._correcteur()).traiter(
+            _message_workflow(conclusion="timed_out", head_branch="main"))
+        assert len(actions.issues_ouvertes) == 1
+        assert actions.modifications == []
+
+    async def test_plusieurs_candidates_la_plus_recente_est_mise_a_jour(self):
+        actions, writer = _ActionsFake(), _WriterFake()
+        actions.issues_existantes = [_issue_existante(17), _issue_existante(23), _issue_existante(20)]
+        await _traitement(actions, writer, self._correcteur()).traiter(
+            _message_workflow(conclusion="timed_out", head_branch="main"))
+        assert [m["numero"] for m in actions.modifications] == [23]
+
+    async def test_recherche_en_panne_ouvre_une_nouvelle_issue(self):
+        # Une issue de trop vaut mieux qu'un échec réel masqué.
+        actions, writer = _ActionsListeEnPanne(), _WriterFake()
+        await _traitement(actions, writer, self._correcteur()).traiter(
+            _message_workflow(conclusion="timed_out", head_branch="main"))
         assert len(actions.issues_ouvertes) == 1

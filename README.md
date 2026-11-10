@@ -80,7 +80,7 @@ The level is decided by the **Detector** (deterministic rules, no LLM call); the
 
 ### Human validation loop
 
-1. Escalation calls the Fixer, **persists** its proposal in the audit log, and opens an Issue showing it.
+1. Escalation calls the Fixer, **persists** its proposal in the audit log, and opens an Issue showing it. **One open Issue per workflow**: if the failure recurs while it is still open, Mirador re-analyses, replaces its description with the latest analysis (so `/approuver` always executes the current proposal) and records the occurrence as a comment, instead of opening one Issue per run.
 2. An owner comments `/approuver` or `/rejeter <reason>` — the identity is checked against the repository's `responsables` (owners).
 3. `/approuver` reloads the persisted proposal and **actually executes it**:
    - **Go dependency update** → triggers `mirador-autofix.yml` in the monitored repository, which regenerates `go.mod`/`go.sum` through a **real build** and opens the PR (the only way to get a fix that passes CI — `go.sum` cannot be computed without a build);

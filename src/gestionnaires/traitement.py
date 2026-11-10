@@ -22,7 +22,7 @@ from src.agents.correcteur import MAX_LOG_CHARS, PropositionCorrection, TypeCorr
 # Même définition que le détecteur : un run « sain » n'est jamais une anomalie.
 from src.agents.detecteur import _CONCLUSIONS_SAINES
 from src.agents.superviseur import DecisionEscalade
-from src.domaine.anomalie import Anomalie
+from src.domaine.anomalie import Anomalie, NiveauRisque
 from src.domaine.journal import EvenementJournal, TypeEvenement
 from src.domaine.regle import RegleDiagnostic
 from src.domaine.tag_image import (
@@ -64,6 +64,13 @@ _PATTERN_TRAILER = re.compile(r"^Mirador-(Anomalie|Issue): (\S+)$")
 # les paquets OS à jour — seul correctif possible pour une CVE de paquet OS
 # dans une image que le dépôt construit lui-même (pas de fichier à éditer).
 _WORKFLOW_REBUILD_IMAGES = "rebuild-hardened-images.yml"
+
+# Déduplication des issues : une issue Mirador ouverte par workflow en échec.
+_LABEL_MIRADOR = "mirador"
+# Identifie le workflow d'une issue, invisible dans le rendu. Les issues
+# antérieures à ce marqueur sont retrouvées par la fin de leur titre.
+_PATTERN_MARQUEUR_WORKFLOW = re.compile(r"<!--\s*mirador:workflow:(\S+)\s*-->")
+_LABELS_NIVEAU = frozenset(niveau.name.lower() for niveau in NiveauRisque)
 
 # Budget de contexte dépôt envoyé au correcteur (fichiers de manifeste/config),
 # quand `depot.lecture_depot` est activé. Calé sur le cas réel kubernetes-
@@ -126,6 +133,7 @@ class Traitement:
         # aucun run n'est écarté comme mort-né, comportement historique.
         self._actions_degrade = actions_degrade
         self._delivery_courant: Optional[str] = None
+        self._workflow_chemin_courant: str = ""
 
     async def traiter(self, message: dict[str, Any]) -> None:
         delivery_id = message.get("delivery_id")
@@ -155,6 +163,7 @@ class Traitement:
         depot, regles = resolu
         if not depot.actif:
             return
+        self._workflow_chemin_courant = message.get("workflow_chemin") or ""
         if (
             message.get("workflow_chemin") == _CHEMIN_WORKFLOW_MESURE
             and message.get("conclusion") == "success"
@@ -491,14 +500,34 @@ class Traitement:
             except Exception as exc:
                 log.warning("escalade.cibles_mesure_indisponibles",
                             anomalie_id=str(anomalie.id), err=str(exc))
-        corps = _corps_issue(anomalie, depot_nom, proposition, cibles)
-        await self._actions.ouvrir_issue(
-            depot_nom, depot.installation_id,
-            titre=f"[Mirador] Anomalie {anomalie.niveau_risque.name} — "
-                  f"{anomalie.workflow_nom} sur {depot_nom}",
-            corps=corps,
-            labels=["mirador", anomalie.niveau_risque.name.lower()],
+        corps = _corps_issue(
+            anomalie, depot_nom, proposition, cibles, self._workflow_chemin_courant
         )
+        suffixe_titre = f" — {anomalie.workflow_nom} sur {depot_nom}"
+        titre = f"[Mirador] Anomalie {anomalie.niveau_risque.name}{suffixe_titre}"
+        labels = [_LABEL_MIRADOR, anomalie.niveau_risque.name.lower()]
+
+        existante = await self._issue_ouverte_du_workflow(depot_nom, depot.installation_id, suffixe_titre)
+        if existante is None:
+            issue = await self._actions.ouvrir_issue(
+                depot_nom, depot.installation_id, titre=titre, corps=corps, labels=labels,
+            )
+            numero = (issue or {}).get("number")
+        else:
+            # Récidive : la description est REMPLACÉE par la dernière analyse,
+            # marqueur anomalie_id compris, car /approuver exécute la proposition
+            # désignée par ce marqueur (webhook.py) — l'ancienne peut être périmée.
+            # Les versions précédentes restent dans l'historique d'édition GitHub.
+            numero = existante["number"]
+            labels += [l for l in existante["labels"] if l not in _LABELS_NIVEAU and l not in labels]
+            await self._actions.modifier_issue(
+                depot_nom, depot.installation_id, numero, titre=titre, corps=corps, labels=labels,
+            )
+            await self._actions.commenter_issue(
+                depot_nom, depot.installation_id, numero, _commentaire_recidive(anomalie),
+            )
+            log.info("escalade.issue_mise_a_jour", depot=depot_nom, numero=numero,
+                     workflow=anomalie.workflow_nom, run_id=anomalie.workflow_run_id)
         anomalie.demarrer_traitement()
         anomalie.escalader()
         self._journaliser(
@@ -507,8 +536,28 @@ class Traitement:
                 "proposition": proposition.model_dump() if proposition else None,
                 "workflow_run_id": anomalie.workflow_run_id,
                 "head_branch": anomalie_branche(anomalie),
+                "issue": numero,
             },
         )
+
+    async def _issue_ouverte_du_workflow(
+        self, depot_nom: str, installation_id: int, suffixe_titre: str
+    ) -> Optional[dict[str, Any]]:
+        """Issue Mirador ouverte du workflow en échec, à mettre à jour plutôt
+        que d'en ouvrir une nouvelle à chaque run (33 doublons mesurés au
+        2026-11-10 sur kubernetes-formation et docker-formation).
+
+        Toute incertitude (API indisponible) rend None : une issue de trop vaut
+        mieux qu'un échec réel masqué.
+        """
+        try:
+            issues = await self._actions.lister_issues_ouvertes(
+                depot_nom, installation_id, label=_LABEL_MIRADOR
+            )
+        except Exception as exc:
+            log.warning("escalade.issues_ouvertes_indisponibles", depot=depot_nom, err=str(exc))
+            return None
+        return _issue_du_meme_workflow(issues, self._workflow_chemin_courant, suffixe_titre)
 
     # --- validation_humaine --------------------------------------------
 
@@ -818,6 +867,33 @@ class Traitement:
         )])
 
 
+def _issue_du_meme_workflow(
+    issues: list[dict[str, Any]], chemin: str, suffixe_titre: str
+) -> Optional[dict[str, Any]]:
+    """La plus récente des issues du workflow : par marqueur s'il y en a un
+    (deux workflows peuvent porter le même nom affiché), sinon par la fin du
+    titre (issues ouvertes avant l'ajout du marqueur)."""
+    retenues = []
+    for issue in issues:
+        marqueur = _PATTERN_MARQUEUR_WORKFLOW.search(issue["body"])
+        if marqueur is not None:
+            meme_workflow = bool(chemin) and marqueur.group(1) == chemin
+        else:
+            meme_workflow = (issue["title"].startswith("[Mirador] Anomalie ")
+                             and issue["title"].endswith(suffixe_titre))
+        if meme_workflow:
+            retenues.append(issue)
+    return max(retenues, key=lambda issue: issue["number"], default=None)
+
+
+def _commentaire_recidive(anomalie: Anomalie) -> str:
+    return (f"🔁 Nouvelle occurrence de cet échec — run #{anomalie.workflow_run_id} "
+            f"(niveau {anomalie.niveau_risque.name}).\n\n"
+            f"Cause : {anomalie.cause_identifiee or 'non identifiée automatiquement.'}\n\n"
+            "La description a été mise à jour avec la dernière analyse : "
+            "`/approuver` exécutera cette nouvelle proposition.")
+
+
 def _decouper_message_commit(message: str) -> tuple[str, str, dict[str, str]]:
     """(titre, corps, trailers Mirador-*) d'un message de commit de mesure."""
     lignes = message.rstrip("\n").split("\n")
@@ -928,8 +1004,11 @@ def _section_proposition(proposition: Any, cibles: Optional[list[_CibleMesure]] 
 
 def _corps_issue(
     anomalie: Anomalie, depot_nom: str, proposition: Any = None,
-    cibles: Optional[list[_CibleMesure]] = None,
+    cibles: Optional[list[_CibleMesure]] = None, workflow_chemin: str = "",
 ) -> str:
+    marqueur_workflow = (
+        f"<!-- mirador:workflow:{workflow_chemin} -->\n" if workflow_chemin else ""
+    )
     return (
         f"## Anomalie détectée\n\n"
         f"| Champ | Valeur |\n|-------|--------|\n"
@@ -941,4 +1020,5 @@ def _corps_issue(
         f"{_section_proposition(proposition, cibles)}"
         f"Pour valider ou rejeter : `/approuver` ou `/rejeter <motif>`.\n\n"
         f"<!-- mirador:anomalie_id:{anomalie.correlation_id} -->\n"
+        f"{marqueur_workflow}"
     )

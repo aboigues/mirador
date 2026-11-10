@@ -78,7 +78,7 @@ Le niveau est décidé par le **Détecteur** (règles déterministes, sans appel
 
 ### Boucle de validation humaine
 
-1. L'escalade appelle le Correcteur, **persiste** sa proposition dans le journal d'audit, et ouvre une Issue qui l'affiche.
+1. L'escalade appelle le Correcteur, **persiste** sa proposition dans le journal d'audit, et ouvre une Issue qui l'affiche. **Une seule Issue ouverte par workflow** : si l'échec se reproduit alors qu'elle est encore ouverte, Mirador réanalyse, remplace sa description par la dernière analyse (`/approuver` exécute donc toujours la proposition à jour) et consigne l'occurrence en commentaire, au lieu d'ouvrir une Issue par run.
 2. Un responsable commente `/approuver` ou `/rejeter <motif>` — l'identité est vérifiée contre les `responsables` du dépôt.
 3. `/approuver` relit la proposition persistée et **l'exécute réellement** :
    - **mise à jour de dépendances Go** → déclenche `mirador-autofix.yml` dans le dépôt surveillé, qui régénère `go.mod`/`go.sum` par un **vrai build** et ouvre la PR (seule voie pour un correctif qui passe la CI — `go.sum` n'est pas calculable sans build) ;
